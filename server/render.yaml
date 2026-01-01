@@ -1,0 +1,33 @@
+# Render Blueprint for Backend Deployment
+# This file helps configure your Render services via Infrastructure as Code
+# 
+# Usage: In Render Dashboard, go to "New" -> "Blueprint" -> Paste this YAML
+
+services:
+  # Backend Web Service
+  - type: web
+    name: dental-clinic-backend
+    env: node
+    region: oregon # or singapore, frankfurt, etc.
+    plan: free # or starter ($7/month) for always-on
+    rootDir: server
+    buildCommand: npm install && npx prisma generate && npx prisma migrate deploy
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      # Add these via Render Dashboard Environment Variables section:
+      # DATABASE_URL (your Neon PostgreSQL connection string)
+      # JWT_SECRET (generate a strong random string)
+      # FRONTEND_URL (your frontend deployment URL)
+      # CLOUDINARY_CLOUD_NAME
+      # CLOUDINARY_API_KEY
+      # CLOUDINARY_API_SECRET
+
+  # Note: You're using Neon PostgreSQL (external)
+  # No need to create PostgreSQL service on Render
+  # Just set DATABASE_URL environment variable with your Neon connection string
+
+
