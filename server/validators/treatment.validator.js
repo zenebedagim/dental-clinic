@@ -83,6 +83,9 @@ const validateCreateOrUpdateTreatment = [
     .trim()
     .isLength({ min: 1, max: 50 })
     .withMessage("Each tool identifier must be 1-50 characters"),
+  // Investigations (X-Ray types and custom notes)
+  // JSON fields (vitalSigns, clinicalExam, clinicalTests, investigations, procedureLogs, postTreatment)
+  // are validated in the controller as they need custom validation
   // SOAP - Assessment
   body("diagnosisCode")
     .optional()
@@ -110,7 +113,7 @@ const validateCreateOrUpdateTreatment = [
     .trim()
     .isLength({ max: 5000 })
     .withMessage("Notes must be less than 5000 characters"),
-  // JSON fields (vitalSigns, clinicalExam, clinicalTests, procedureLogs, postTreatment)
+  // JSON fields (vitalSigns, clinicalExam, clinicalTests, investigations, procedureLogs, postTreatment)
   // are validated in the controller as they need custom validation
 ];
 

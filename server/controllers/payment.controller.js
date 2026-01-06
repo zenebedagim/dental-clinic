@@ -1,7 +1,16 @@
 const prisma = require("../config/db");
-const { sendSuccess, sendError } = require("../utils/response.util");
+const {
+  sendSuccess,
+  sendError,
+  sendPaginatedSuccess,
+} = require("../utils/response.util");
+const { generateReceiptHTML } = require("../utils/receiptGenerator");
+const { logSensitiveAction } = require("../middleware/auditLogger");
 
 const createPayment = async (req, res) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:10',message:'createPayment entry',data:{appointmentId:req.body?.appointmentId,userId:req.user?.id,role:req.user?.role},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   try {
     const {
       appointmentId,
@@ -13,15 +22,42 @@ const createPayment = async (req, res) => {
       isHidden = false,
     } = req.body;
     const { id: userId, role, branchId } = req.user;
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:22',message:'extracted request data',data:{appointmentId,amount,paidAmount,paymentStatus,hasNotes:!!notes,isHidden},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
-    // Verify appointment exists and belongs to reception's branch
+    // Verify appointment exists
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:24',message:'before appointment query',data:{appointmentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: {
         branch: true,
-        treatment: true,
+        treatments: {
+          orderBy: { createdAt: "desc" },
+          take: 1, // Get only the most recent treatment
+        },
+        dentist: {
+          select: {
+            id: true,
+          },
+        },
       },
     });
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:38',message:'after appointment query',data:{found:!!appointment,hasTreatments:!!appointment?.treatments,hasBranch:!!appointment?.branch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+
+    // Transform for backward compatibility
+    if (
+      appointment &&
+      appointment.treatments &&
+      Array.isArray(appointment.treatments)
+    ) {
+      appointment.treatment =
+        appointment.treatments.length > 0 ? appointment.treatments[0] : null;
+    }
 
     if (!appointment) {
       return sendError(res, "Appointment not found", 404);
@@ -36,14 +72,17 @@ const createPayment = async (req, res) => {
       );
     }
 
-    // Check if payment already exists
-    const existingPayment = await prisma.payment.findUnique({
-      where: { appointmentId },
-    });
-
-    if (existingPayment) {
-      return sendError(res, "Payment already exists for this appointment", 400);
+    // Dentist can only create payments for their own appointments
+    if (role === "DENTIST" && appointment.dentistId !== userId) {
+      return sendError(
+        res,
+        "You can only create payments for your own appointments",
+        403
+      );
     }
+
+    // Allow multiple payments per appointment - removed duplicate check
+    // Users can now create 10+ payments for the same appointment
 
     // Validate paidAmount doesn't exceed amount
     if (paidAmount > amount) {
@@ -62,10 +101,13 @@ const createPayment = async (req, res) => {
       }
     }
 
-    // Use treatment totalCost if available, otherwise use provided amount
+    // Use treatment totalCost if available, otherwise use provided amount, or default to 0
     const finalAmount =
-      appointment.treatment?.totalCost?.toNumber() || parseFloat(amount);
-
+      appointment.treatment?.totalCost?.toNumber() ||
+      (amount !== undefined ? parseFloat(amount) : 0);
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:96',message:'before payment create',data:{finalAmount,appointmentId,finalPaymentStatus,paidAmount:parseFloat(paidAmount||0)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     const payment = await prisma.payment.create({
       data: {
         appointmentId,
@@ -96,35 +138,45 @@ const createPayment = async (req, res) => {
                 email: true,
               },
             },
-            treatment: true,
+            treatments: {
+              orderBy: { createdAt: "desc" },
+              take: 1, // Get only the most recent treatment
+            },
           },
         },
       },
     });
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:148',message:'after payment create success',data:{paymentId:payment?.id,appointmentId:payment?.appointmentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
 
-    // Notify reception about payment creation (if different from creator)
-    try {
-      const notificationService = require('../services/notification.service');
-      const { NotificationType } = require('../utils/notificationTypes');
-      
-      if (payment.appointment.receptionistId && payment.appointment.receptionistId !== userId) {
-        await notificationService.notifyUser(payment.appointment.receptionistId, {
-          type: NotificationType.PAYMENT_CREATED,
-          title: 'Payment Created',
-          message: `Payment of ${payment.amount} created for ${payment.appointment.patientName || payment.appointment.patient?.name || 'patient'}`,
-          data: {
-            paymentId: payment.id,
-            appointmentId: payment.appointmentId,
-            amount: payment.amount.toString(),
-          },
-        });
-      }
-    } catch (notifError) {
-      console.error('Error sending payment creation notification:', notifError);
+    // Transform for backward compatibility
+    if (
+      payment.appointment.treatments &&
+      Array.isArray(payment.appointment.treatments)
+    ) {
+      payment.appointment.treatment =
+        payment.appointment.treatments.length > 0
+          ? payment.appointment.treatments[0]
+          : null;
     }
+
+    // Log sensitive action (non-blocking - don't fail if logging fails)
+    logSensitiveAction(req, "CREATE_PAYMENT", {
+      paymentId: payment.id,
+      appointmentId: appointmentId,
+      amount: finalAmount,
+      paidAmount: parseFloat(paidAmount || 0),
+      status: finalPaymentStatus,
+    }).catch((logError) => {
+      console.error("Error logging create payment action:", logError);
+    });
 
     return sendSuccess(res, payment, 201, "Payment created successfully");
   } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:173',message:'createPayment error caught',data:{errorMessage:error?.message,errorCode:error?.code,errorName:error?.name,prismaCode:error?.code,prismaMeta:error?.meta,stack:error?.stack?.substring(0,500)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     console.error("Create payment error:", error);
     return sendError(res, "Server error", 500, error);
   }
@@ -172,15 +224,22 @@ const updatePayment = async (req, res) => {
     // Build update data
     const updateData = {};
     if (amount !== undefined) updateData.amount = parseFloat(amount);
-    if (paidAmount !== undefined) updateData.paidAmount = parseFloat(paidAmount);
+    if (paidAmount !== undefined)
+      updateData.paidAmount = parseFloat(paidAmount);
     if (paymentMethod !== undefined) updateData.paymentMethod = paymentMethod;
     if (notes !== undefined) updateData.notes = notes;
-    if (paymentDate !== undefined) updateData.paymentDate = new Date(paymentDate);
-    if (isHidden !== undefined) updateData.isHidden = isHidden === true || isHidden === "true";
+    if (paymentDate !== undefined)
+      updateData.paymentDate = new Date(paymentDate);
+    if (isHidden !== undefined)
+      updateData.isHidden = isHidden === true || isHidden === "true";
 
     // Determine payment status
-    const finalAmount = amount !== undefined ? parseFloat(amount) : payment.amount.toNumber();
-    const finalPaidAmount = paidAmount !== undefined ? parseFloat(paidAmount) : payment.paidAmount.toNumber();
+    const finalAmount =
+      amount !== undefined ? parseFloat(amount) : payment.amount.toNumber();
+    const finalPaidAmount =
+      paidAmount !== undefined
+        ? parseFloat(paidAmount)
+        : payment.paidAmount.toNumber();
 
     if (finalPaidAmount > finalAmount) {
       return sendError(res, "Paid amount cannot exceed total amount", 400);
@@ -202,7 +261,8 @@ const updatePayment = async (req, res) => {
     // Set payment date if payment status is being updated to PAID/PARTIAL
     if (
       updateData.paymentStatus &&
-      (updateData.paymentStatus === "PAID" || updateData.paymentStatus === "PARTIAL") &&
+      (updateData.paymentStatus === "PAID" ||
+        updateData.paymentStatus === "PARTIAL") &&
       !paymentDate
     ) {
       updateData.paymentDate = new Date();
@@ -229,35 +289,40 @@ const updatePayment = async (req, res) => {
                 email: true,
               },
             },
-            treatment: true,
+            treatments: {
+              orderBy: { createdAt: "desc" },
+              take: 1, // Get only the most recent treatment
+            },
           },
         },
       },
     });
 
-    // Notify reception about payment update
-    try {
-      const notificationService = require('../services/notification.service');
-      const { NotificationType } = require('../utils/notificationTypes');
-      
-      if (updatedPayment.appointment.receptionistId && updatedPayment.appointment.receptionistId !== userId) {
-        await notificationService.notifyUser(updatedPayment.appointment.receptionistId, {
-          type: NotificationType.PAYMENT_UPDATED,
-          title: 'Payment Updated',
-          message: `Payment status updated to ${updatedPayment.paymentStatus} for ${updatedPayment.appointment.patientName || updatedPayment.appointment.patient?.name || 'patient'}`,
-          data: {
-            paymentId: updatedPayment.id,
-            appointmentId: updatedPayment.appointmentId,
-            paymentStatus: updatedPayment.paymentStatus,
-            amount: updatedPayment.amount.toString(),
-          },
-        });
-      }
-    } catch (notifError) {
-      console.error('Error sending payment update notification:', notifError);
+    // Transform for backward compatibility
+    if (
+      payment.appointment.treatments &&
+      Array.isArray(payment.appointment.treatments)
+    ) {
+      payment.appointment.treatment =
+        payment.appointment.treatments.length > 0
+          ? payment.appointment.treatments[0]
+          : null;
     }
 
-    return sendSuccess(res, updatedPayment, 200, "Payment updated successfully");
+    // Log sensitive action (non-blocking - don't fail if logging fails)
+    logSensitiveAction(req, "UPDATE_PAYMENT", {
+      paymentId: id,
+      changes: updateData,
+    }).catch((logError) => {
+      console.error("Error logging update payment action:", logError);
+    });
+
+    return sendSuccess(
+      res,
+      updatedPayment,
+      200,
+      "Payment updated successfully"
+    );
   } catch (error) {
     console.error("Update payment error:", error);
     return sendError(res, "Server error", 500, error);
@@ -268,28 +333,33 @@ const getPayments = async (req, res) => {
   try {
     console.log("=== getPayments Request ===");
     console.log("Query params:", JSON.stringify(req.query, null, 2));
-    console.log("User:", req.user ? { id: req.user.id, role: req.user.role, branchId: req.user.branchId } : "NO USER");
-    
+    console.log(
+      "User:",
+      req.user
+        ? { id: req.user.id, role: req.user.role, branchId: req.user.branchId }
+        : "NO USER"
+    );
+
     // Validate req.user exists
     if (!req.user) {
       console.error("No user in request");
       return sendError(res, "Authentication required", 401);
     }
-    
-    const { 
-      branchId: queryBranchId, 
-      status, 
-      startDate, 
+
+    const {
+      branchId: queryBranchId,
+      status,
+      startDate,
       endDate,
       minAmount,
       maxAmount,
       dentistId,
       isHidden,
       limit,
-      skip
+      skip,
     } = req.query;
     const { id: userId, role, branchId } = req.user;
-    
+
     console.log("User role:", role);
     console.log("User branchId:", branchId);
     console.log("Query branchId:", queryBranchId);
@@ -306,8 +376,12 @@ const getPayments = async (req, res) => {
     }
 
     // Validate branchId if provided in query
-    if (filterBranchId && typeof filterBranchId !== 'string') {
-      console.error("Invalid branchId type:", typeof filterBranchId, filterBranchId);
+    if (filterBranchId && typeof filterBranchId !== "string") {
+      console.error(
+        "Invalid branchId type:",
+        typeof filterBranchId,
+        filterBranchId
+      );
       return sendError(res, "Invalid branch ID format", 400);
     }
 
@@ -323,11 +397,11 @@ const getPayments = async (req, res) => {
       console.error("RECEPTION user has no branchId to filter by");
       return sendError(res, "Branch ID is required", 400);
     }
-    
+
     if (dentistId) {
       appointmentFilter.dentistId = dentistId;
     }
-    
+
     // Receptionists can see all payments in their branch (branch-level access)
     // Branch isolation is enforced by filterBranchId above - reception cannot see other branches
     // Always set appointment filter if we have branchId (required for RECEPTION)
@@ -336,7 +410,9 @@ const getPayments = async (req, res) => {
       where.appointment = appointmentFilter;
     } else {
       // This shouldn't happen for RECEPTION (we check above), but handle it anyway
-      console.warn("No branchId or dentistId provided, querying all payments (not recommended)");
+      console.warn(
+        "No branchId or dentistId provided, querying all payments (not recommended)"
+      );
     }
 
     if (status) {
@@ -389,7 +465,11 @@ const getPayments = async (req, res) => {
 
     // Build query options with pagination and optimized includes
     // Ensure where clause is valid and not empty (must have at least one condition)
-    if (!where || typeof where !== 'object' || Object.keys(where).length === 0) {
+    if (
+      !where ||
+      typeof where !== "object" ||
+      Object.keys(where).length === 0
+    ) {
       console.error("Invalid or empty where clause:", where);
       // If no filters at all, return empty array (shouldn't happen for RECEPTION)
       if (role === "RECEPTION") {
@@ -426,12 +506,14 @@ const getPayments = async (req, res) => {
                 email: true,
               },
             },
-            // Only include treatment if needed (optimize for network speed)
-            treatment: {
+            // Only include most recent treatment if needed (optimize for network speed)
+            treatments: {
               select: {
                 id: true,
                 totalCost: true,
               },
+              orderBy: { createdAt: "desc" },
+              take: 1, // Get only the most recent treatment
             },
             branch: {
               select: {
@@ -452,7 +534,7 @@ const getPayments = async (req, res) => {
       // Default limit to prevent loading too much data at once
       queryOptions.take = 100;
     }
-    
+
     if (skip !== undefined) {
       queryOptions.skip = parseInt(skip, 10);
     }
@@ -460,12 +542,14 @@ const getPayments = async (req, res) => {
     console.log("=== getPayments Query Options ===");
     try {
       // Create a safe copy for logging (remove Date objects)
-      const safeWhere = JSON.parse(JSON.stringify(queryOptions.where, (key, value) => {
-        if (value instanceof Date) {
-          return value.toISOString();
-        }
-        return value;
-      }));
+      const safeWhere = JSON.parse(
+        JSON.stringify(queryOptions.where, (key, value) => {
+          if (value instanceof Date) {
+            return value.toISOString();
+          }
+          return value;
+        })
+      );
       console.log("Where clause:", JSON.stringify(safeWhere, null, 2));
     } catch (e) {
       console.log("Where clause (could not stringify):", queryOptions.where);
@@ -473,17 +557,51 @@ const getPayments = async (req, res) => {
     }
     console.log("Take:", queryOptions.take);
     console.log("Skip:", queryOptions.skip);
-    console.log("Include structure keys:", Object.keys(queryOptions.include || {}));
-    
+    console.log(
+      "Include structure keys:",
+      Object.keys(queryOptions.include || {})
+    );
+
     try {
       console.log("Executing Prisma query...");
+
+      // Get total count for pagination metadata
+      const total = await prisma.payment.count({ where });
+
+      // Calculate pagination metadata
+      const page =
+        skip !== undefined
+          ? Math.floor(parseInt(skip, 10) / parseInt(limit || 100, 10)) + 1
+          : 1;
+      const pageSize = limit !== undefined ? parseInt(limit, 10) : 100;
+
       const payments = await prisma.payment.findMany(queryOptions);
       console.log("Prisma query executed successfully");
 
       console.log("=== getPayments Success ===");
       console.log(`Returning ${payments.length} payments`);
-      
-      return sendSuccess(res, payments);
+
+      // Transform for backward compatibility
+      const transformedPayments = payments.map((payment) => {
+        if (
+          payment.appointment.treatments &&
+          Array.isArray(payment.appointment.treatments)
+        ) {
+          payment.appointment.treatment =
+            payment.appointment.treatments.length > 0
+              ? payment.appointment.treatments[0]
+              : null;
+        }
+        return payment;
+      });
+
+      return sendPaginatedSuccess(
+        res,
+        transformedPayments,
+        { total, page, pageSize },
+        200,
+        "Payments retrieved successfully"
+      );
     } catch (prismaError) {
       console.error("=== getPayments Prisma Error ===");
       console.error("Prisma error code:", prismaError.code);
@@ -505,7 +623,7 @@ const getPayments = async (req, res) => {
     return sendError(res, `Server error: ${error.message}`, 500, {
       message: error.message,
       code: error.code,
-      meta: error.meta
+      meta: error.meta,
     });
   }
 };
@@ -515,7 +633,8 @@ const getPaymentByAppointment = async (req, res) => {
     const { appointmentId } = req.params;
     const { id: userId, role, branchId } = req.user;
 
-    const payment = await prisma.payment.findUnique({
+    // Get all payments for this appointment (now supports multiple payments)
+    const payments = await prisma.payment.findMany({
       where: { appointmentId },
       include: {
         appointment: {
@@ -542,7 +661,10 @@ const getPaymentByAppointment = async (req, res) => {
                 email: true,
               },
             },
-            treatment: true,
+            treatments: {
+              orderBy: { createdAt: "desc" },
+              take: 1, // Get only the most recent treatment
+            },
             branch: {
               select: {
                 id: true,
@@ -554,13 +676,28 @@ const getPaymentByAppointment = async (req, res) => {
       },
     });
 
-    if (!payment) {
-      return sendError(res, "Payment not found", 404);
+    if (!payments || payments.length === 0) {
+      return sendError(res, "No payments found for this appointment", 404);
     }
+
+    // Transform for backward compatibility
+    const transformedPayments = payments.map((payment) => {
+      if (
+        payment.appointment.treatments &&
+        Array.isArray(payment.appointment.treatments)
+      ) {
+        payment.appointment.treatment =
+          payment.appointment.treatments.length > 0
+            ? payment.appointment.treatments[0]
+            : null;
+      }
+      return payment;
+    });
 
     // Reception can only view payments for appointments in their branch
     if (role === "RECEPTION") {
-      if (payment.appointment.branchId !== branchId) {
+      const firstPayment = transformedPayments[0];
+      if (firstPayment && firstPayment.appointment.branchId !== branchId) {
         return sendError(
           res,
           "You can only view payments for appointments in your branch",
@@ -570,14 +707,8 @@ const getPaymentByAppointment = async (req, res) => {
       // Receptionists can see all payments in their branch (branch-level isolation)
     }
 
-    // For receptionists, check if detailed billing is enabled
-    // Dentists always see full details regardless of flag
-    if (role === "RECEPTION" && !payment.showDetailedBilling) {
-      // Return payment with basic info only (detailed billing section hidden)
-      // The client will handle conditional rendering based on this flag
-    }
-
-    return sendSuccess(res, payment);
+    // Return all payments for the appointment (supports multiple payments)
+    return sendSuccess(res, transformedPayments);
   } catch (error) {
     console.error("Get payment by appointment error:", error);
     return sendError(res, "Server error", 500, error);
@@ -638,7 +769,8 @@ const toggleDetailedBilling = async (req, res) => {
       where: { id },
       data: {
         showDetailedBilling: enabled === true || enabled === "true",
-        detailedBillingEnabledBy: enabled === true || enabled === "true" ? userId : null,
+        detailedBillingEnabledBy:
+          enabled === true || enabled === "true" ? userId : null,
       },
       include: {
         appointment: {
@@ -658,7 +790,10 @@ const toggleDetailedBilling = async (req, res) => {
                 email: true,
               },
             },
-            treatment: true,
+            treatments: {
+              orderBy: { createdAt: "desc" },
+              take: 1, // Get only the most recent treatment
+            },
             branch: {
               select: {
                 id: true,
@@ -670,24 +805,15 @@ const toggleDetailedBilling = async (req, res) => {
       },
     });
 
-    // Notify reception when detailed billing is enabled
-    if (enabled && updatedPayment.appointment.receptionistId) {
-      try {
-        const notificationService = require('../services/notification.service');
-        const { NotificationType } = require('../utils/notificationTypes');
-        
-        await notificationService.notifyUser(updatedPayment.appointment.receptionistId, {
-          type: NotificationType.DETAILED_BILLING_ENABLED,
-          title: 'Detailed Billing Enabled',
-          message: `Detailed billing has been enabled for payment of ${updatedPayment.appointment.patientName || updatedPayment.appointment.patient?.name || 'patient'}`,
-          data: {
-            paymentId: updatedPayment.id,
-            appointmentId: updatedPayment.appointmentId,
-          },
-        });
-      } catch (notifError) {
-        console.error('Error sending detailed billing notification:', notifError);
-      }
+    // Transform for backward compatibility
+    if (
+      updatedPayment.appointment.treatments &&
+      Array.isArray(updatedPayment.appointment.treatments)
+    ) {
+      updatedPayment.appointment.treatment =
+        updatedPayment.appointment.treatments.length > 0
+          ? updatedPayment.appointment.treatments[0]
+          : null;
     }
 
     return sendSuccess(
@@ -702,11 +828,199 @@ const toggleDetailedBilling = async (req, res) => {
   }
 };
 
+// Get payment statistics
+const getPaymentStats = async (req, res) => {
+  try {
+    const { branchId: userBranchId, role } = req.user;
+    const { branchId: queryBranchId, startDate, endDate } = req.query;
+
+    // Determine branch filter
+    let branchId;
+    if (role === "ADMIN") {
+      branchId = queryBranchId;
+    } else {
+      branchId = userBranchId;
+    }
+
+    const where = {};
+    if (branchId) {
+      where.appointment = { branchId };
+    }
+
+    // Date range filter
+    if (startDate || endDate) {
+      where.paymentDate = {};
+      if (startDate) {
+        where.paymentDate.gte = new Date(startDate);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        where.paymentDate.lte = end;
+      }
+    }
+
+    // Get all payments for stats
+    const payments = await prisma.payment.findMany({
+      where,
+      include: {
+        appointment: {
+          select: {
+            branchId: true,
+            date: true,
+          },
+        },
+      },
+    });
+
+    // Calculate statistics
+    const totalRevenue = payments
+      .filter(
+        (p) => p.paymentStatus === "PAID" || p.paymentStatus === "PARTIAL"
+      )
+      .reduce((sum, p) => sum + p.paidAmount.toNumber(), 0);
+
+    const totalAmount = payments.reduce(
+      (sum, p) => sum + p.amount.toNumber(),
+      0
+    );
+
+    const unpaidCount = payments.filter(
+      (p) => p.paymentStatus === "UNPAID"
+    ).length;
+
+    const partialCount = payments.filter(
+      (p) => p.paymentStatus === "PARTIAL"
+    ).length;
+
+    const paidCount = payments.filter((p) => p.paymentStatus === "PAID").length;
+
+    const collectionRate =
+      totalAmount > 0 ? (totalRevenue / totalAmount) * 100 : 0;
+
+    const stats = {
+      totalRevenue,
+      totalAmount,
+      unpaidCount,
+      partialCount,
+      paidCount,
+      totalCount: payments.length,
+      collectionRate: Math.round(collectionRate * 100) / 100,
+    };
+
+    return sendSuccess(res, stats, 200, "Payment statistics retrieved");
+  } catch (error) {
+    console.error("Get payment stats error:", error);
+    return sendError(res, "Server error", 500, error);
+  }
+};
+
+const generateReceipt = async (req, res) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:918',message:'generateReceipt entry',data:{paymentId:req.params?.id,userId:req.user?.id,role:req.user?.role},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+  // #endregion
+  try {
+    const { id } = req.params;
+    const { branchId: userBranchId, role } = req.user;
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:923',message:'before payment query',data:{paymentId:id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+
+    // Get payment with all related data
+    const payment = await prisma.payment.findUnique({
+      where: { id },
+      include: {
+        appointment: {
+          include: {
+            patient: {
+              select: {
+                id: true,
+                name: true,
+                phone: true,
+                email: true,
+              },
+            },
+            dentist: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            treatments: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+            },
+            branch: {
+              select: {
+                id: true,
+                name: true,
+                address: true,
+                phone: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:959',message:'after payment query',data:{found:!!payment,hasAppointment:!!payment?.appointment,hasBranch:!!payment?.appointment?.branch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+
+    if (!payment) {
+      return sendError(res, "Payment not found", 404);
+    }
+
+    // Check permissions
+    if (role === "RECEPTION" && payment.appointment.branchId !== userBranchId) {
+      return sendError(
+        res,
+        "You can only generate receipts for payments in your branch",
+        403
+      );
+    }
+
+    // Transform treatment for backward compatibility
+    if (
+      payment.appointment.treatments &&
+      Array.isArray(payment.appointment.treatments)
+    ) {
+      payment.appointment.treatment =
+        payment.appointment.treatments.length > 0
+          ? payment.appointment.treatments[0]
+          : null;
+    }
+
+    // Generate receipt HTML
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:985',message:'before generateReceiptHTML',data:{hasPayment:!!payment,hasAppointment:!!payment?.appointment,hasBranch:!!payment?.appointment?.branch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    const receiptHTML = generateReceiptHTML(
+      payment,
+      payment.appointment.branch
+    );
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:990',message:'after generateReceiptHTML',data:{hasHTML:!!receiptHTML,htmlLength:receiptHTML?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+
+    // Return HTML receipt
+    res.setHeader("Content-Type", "text/html");
+    return res.send(receiptHTML);
+  } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:996',message:'generateReceipt error caught',data:{errorMessage:error?.message,errorCode:error?.code,errorName:error?.name,prismaCode:error?.code,prismaMeta:error?.meta,stack:error?.stack?.substring(0,500)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    console.error("Generate receipt error:", error);
+    return sendError(res, "Server error", 500, error);
+  }
+};
+
 module.exports = {
   createPayment,
   updatePayment,
   getPayments,
   getPaymentByAppointment,
   toggleDetailedBilling,
+  getPaymentStats,
+  generateReceipt,
 };
-

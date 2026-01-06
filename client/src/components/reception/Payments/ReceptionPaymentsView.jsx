@@ -5,6 +5,17 @@ import api from "../../../services/api";
 import useBranch from "../../../hooks/useBranch";
 import useRoleAccess from "../../../hooks/useRoleAccess";
 
+// Helper function to safely convert Decimal or number to number
+const toNumber = (value) => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  if (typeof value === "object" && typeof value.toNumber === "function") {
+    return value.toNumber();
+  }
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
 const ReceptionPaymentsView = () => {
   const { selectedBranch, setSelectedBranch } = useBranch();
   const { isRole } = useRoleAccess();
@@ -53,7 +64,10 @@ const ReceptionPaymentsView = () => {
     try {
       setLoading(true);
       const response = await api.get("/payments", {
-        params: { branchId: selectedBranch.id },
+        params: {
+          branchId: selectedBranch.id,
+          isHidden: "false", // Only fetch visible payments for stats
+        },
         signal: abortController.signal,
       });
       const payments = response.data?.data || response.data || [];
@@ -65,34 +79,34 @@ const ReceptionPaymentsView = () => {
         return;
       }
 
+      // Filter to only visible payments (exclude private/hidden)
+      const visiblePayments = payments.filter((payment) => !payment.isHidden);
+
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // Calculate today's total payments
-      const todayPayments = payments
+      // Calculate today's total payments (only visible)
+      const todayPayments = visiblePayments
         .filter((payment) => {
           const paymentDate = payment.paymentDate
             ? new Date(payment.paymentDate)
             : new Date(payment.createdAt);
           return paymentDate >= today && paymentDate < tomorrow;
         })
-        .reduce(
-          (sum, payment) => sum + (payment.paidAmount?.toNumber() || 0),
-          0
-        );
+        .reduce((sum, payment) => sum + toNumber(payment.paidAmount), 0);
 
-      // Count unpaid and partial payments
-      const pendingPayments = payments.filter(
+      // Count unpaid and partial payments (only visible)
+      const pendingPayments = visiblePayments.filter(
         (payment) =>
           payment.paymentStatus === "UNPAID" ||
           payment.paymentStatus === "PARTIAL"
       ).length;
 
-      // Count overdue payments (30+ days, unpaid or partial)
+      // Count overdue payments (30+ days, unpaid or partial, only visible)
       const todayTimestamp = today.getTime();
-      const overduePayments = payments.filter((payment) => {
+      const overduePayments = visiblePayments.filter((payment) => {
         if (payment.paymentStatus === "PAID") return false;
         const paymentDate = payment.paymentDate
           ? new Date(payment.paymentDate).getTime()

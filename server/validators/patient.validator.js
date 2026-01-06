@@ -123,6 +123,7 @@ const validatePatientSearch = [
   // The controller will handle parsing and validation
   query("name").optional(),
   query("phone").optional(),
+  query("cardNo").optional(),
   query("email").optional(),
   query("dateOfBirth_from").optional(),
   query("dateOfBirth_to").optional(),

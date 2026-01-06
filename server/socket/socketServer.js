@@ -4,9 +4,7 @@
  */
 
 const { Server } = require("socket.io");
-const notificationService = require("../services/notification.service");
 const { authenticateSocket } = require("../middleware/socketAuth.middleware");
-const metricsService = require("../services/notificationMetrics.service");
 
 let io = null;
 
@@ -30,9 +28,6 @@ const initializeSocketIO = (httpServer) => {
 
   console.log("Socket.io initialized (single server mode).");
 
-  // Set Socket.io instance in notification service
-  notificationService.setSocketIO(io);
-
   // Authentication middleware
   io.use(authenticateSocket);
 
@@ -41,10 +36,6 @@ const initializeSocketIO = (httpServer) => {
     const { id: userId, role, branchId } = socket.user;
 
     console.log(`User ${userId} (${role}) connected: ${socket.id}`);
-
-    // Register user socket
-    notificationService.registerUserSocket(userId, socket.id);
-    metricsService.setActiveConnections(io.sockets.sockets.size);
 
     // Join user-specific room
     socket.join(`user:${userId}`);
@@ -55,65 +46,9 @@ const initializeSocketIO = (httpServer) => {
     // Join branch-based room
     socket.join(`branch:${branchId}`);
 
-    // Deliver pending notifications from database
-    try {
-      const pendingNotifications =
-        await notificationService.getPendingNotifications(userId);
-      for (const notification of pendingNotifications) {
-        socket.emit("notification", notification);
-
-        // Mark as delivered if notification exists in DB
-        if (notification.id) {
-          const prisma = require("../config/db");
-          await prisma.notification.update({
-            where: { id: notification.id },
-            data: {
-              delivered: true,
-              deliveredAt: new Date(),
-            },
-          });
-        }
-      }
-    } catch (error) {
-      console.error("Error delivering pending notifications:", error);
-    }
-
-    // Handle ACK
-    socket.on("notification:ack", async (data) => {
-      try {
-        const { notificationId, eventId } = data;
-
-        if (notificationId) {
-          await notificationService.acknowledgeNotification(
-            notificationId,
-            userId
-          );
-        } else if (eventId) {
-          // Find notification by eventId
-          const prisma = require("../config/db");
-          const notification = await prisma.notification.findUnique({
-            where: { eventId },
-          });
-
-          if (notification && notification.userId === userId) {
-            await notificationService.acknowledgeNotification(
-              notification.id,
-              userId
-            );
-          }
-        }
-      } catch (error) {
-        console.error("Error handling ACK:", error);
-      }
-    });
-
     // Handle disconnect
     socket.on("disconnect", (reason) => {
       console.log(`User ${userId} disconnected: ${reason}`);
-
-      // Unregister user socket
-      notificationService.unregisterUserSocket(userId, socket.id);
-      metricsService.setActiveConnections(io.sockets.sockets.size);
     });
 
     // Handle error

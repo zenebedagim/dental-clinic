@@ -9,8 +9,15 @@
  * @param {*} data - Response data
  * @param {number} statusCode - HTTP status code (default: 200)
  * @param {string} message - Optional success message
+ * @param {Object} meta - Optional metadata (pagination, etc.)
  */
-const sendSuccess = (res, data = null, statusCode = 200, message = null) => {
+const sendSuccess = (
+  res,
+  data = null,
+  statusCode = 200,
+  message = null,
+  meta = null
+) => {
   const response = {
     success: true,
   };
@@ -23,7 +30,66 @@ const sendSuccess = (res, data = null, statusCode = 200, message = null) => {
     response.message = message;
   }
 
+  if (meta) {
+    response.meta = meta;
+  }
+
+  // Add ETag and Last-Modified headers for caching if data is provided
+  if (data && Array.isArray(data) && data.length > 0) {
+    const etag = generateETag(data);
+    res.set("ETag", etag);
+    res.set("Last-Modified", new Date().toUTCString());
+  }
+
   return res.status(statusCode).json(response);
+};
+
+/**
+ * Generate ETag for data
+ * @param {*} data - Data to generate ETag for
+ * @returns {string} ETag value
+ */
+const generateETag = (data) => {
+  const dataString = JSON.stringify(data);
+  // Simple hash function (in production, use crypto)
+  let hash = 0;
+  for (let i = 0; i < dataString.length; i++) {
+    const char = dataString.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return `"${Math.abs(hash).toString(16)}"`;
+};
+
+/**
+ * Send paginated success response
+ * @param {Object} res - Express response object
+ * @param {Array} data - Response data array
+ * @param {Object} pagination - Pagination info { total, page, pageSize }
+ * @param {number} statusCode - HTTP status code (default: 200)
+ * @param {string} message - Optional success message
+ */
+const sendPaginatedSuccess = (
+  res,
+  data = [],
+  pagination = {},
+  statusCode = 200,
+  message = null
+) => {
+  const { total = 0, page = 1, pageSize = 20 } = pagination;
+  const hasMore = page * pageSize < total;
+
+  const meta = {
+    pagination: {
+      total,
+      page,
+      pageSize,
+      hasMore,
+      totalPages: Math.ceil(total / pageSize),
+    },
+  };
+
+  return sendSuccess(res, data, statusCode, message, meta);
 };
 
 /**
@@ -59,5 +125,5 @@ const sendError = (res, message, statusCode = 400, error = null) => {
 module.exports = {
   sendSuccess,
   sendError,
+  sendPaginatedSuccess,
 };
-

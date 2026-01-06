@@ -3,14 +3,23 @@ import api from "../../../services/api";
 import useBranch from "../../../hooks/useBranch";
 import DataTable from "../../common/DataTable";
 import { formatDate } from "../../../utils/tableUtils";
+import { exportAppointmentsToCSV } from "../../../utils/csvExporter";
+import { useToast } from "../../../hooks/useToast";
+import SkeletonLoader from "../../common/SkeletonLoader";
 
 const SentCases = () => {
   const { selectedBranch } = useBranch();
+  const { success: showSuccess, error: showError } = useToast();
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [dentistFilter, setDentistFilter] = useState("");
   const [allDentists, setAllDentists] = useState([]);
+  const [stats, setStats] = useState({
+    total: 0,
+    completed: 0,
+    inProgress: 0,
+  });
 
   useEffect(() => {
     if (selectedBranch?.id) {
@@ -36,10 +45,10 @@ const SentCases = () => {
     if (!selectedBranch?.id) {
       return;
     }
-    
+
     // Use AbortController for request cancellation
     const abortController = new AbortController();
-    
+
     try {
       setLoading(true);
       const response = await api.get("/appointments/reception", {
@@ -51,10 +60,18 @@ const SentCases = () => {
       // Note: X-Ray results are not shown to Reception per access control rules
       const sentCases = data.filter((apt) => apt.treatment);
       setAppointments(sentCases);
+
+      // Calculate statistics
+      setStats({
+        total: sentCases.length,
+        completed: sentCases.filter((apt) => apt.status === "COMPLETED").length,
+        inProgress: sentCases.filter((apt) => apt.status === "IN_PROGRESS")
+          .length,
+      });
     } catch (err) {
       // Ignore abort errors
       if (err.name === "AbortError") return;
-      
+
       console.error("Error fetching sent cases:", err);
     } finally {
       setLoading(false);
@@ -134,18 +151,83 @@ const SentCases = () => {
   }
 
   if (loading) {
-    return <div className="text-center py-8">Loading sent cases...</div>;
+    return (
+      <div className="space-y-4">
+        <SkeletonLoader type="card" count={3} />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-          Sent / Completed Cases
-        </h1>
-        <p className="text-sm sm:text-base text-gray-600 mt-2">
-          Appointments that have finished treatments
-        </p>
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            Sent / Completed Cases
+          </h1>
+          <p className="text-sm sm:text-base text-gray-600 mt-2">
+            Appointments that have finished treatments
+          </p>
+        </div>
+        {filteredAppointments.length > 0 && (
+          <button
+            onClick={() => {
+              try {
+                exportAppointmentsToCSV(filteredAppointments);
+                showSuccess("Sent cases exported successfully");
+              } catch (err) {
+                showError("Failed to export sent cases");
+                console.error("Export error:", err);
+              }
+            }}
+            className="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-md hover:bg-indigo-100 transition-colors"
+          >
+            📥 Export to CSV
+          </button>
+        )}
+      </div>
+
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="p-4 bg-white rounded-lg shadow-md">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Total Cases</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">
+                {stats.total}
+              </p>
+            </div>
+            <div className="p-3 bg-blue-100 rounded-full">
+              <span className="text-2xl">📋</span>
+            </div>
+          </div>
+        </div>
+        <div className="p-4 bg-white rounded-lg shadow-md">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Completed</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">
+                {stats.completed}
+              </p>
+            </div>
+            <div className="p-3 bg-green-100 rounded-full">
+              <span className="text-2xl">✅</span>
+            </div>
+          </div>
+        </div>
+        <div className="p-4 bg-white rounded-lg shadow-md">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">In Progress</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">
+                {stats.inProgress}
+              </p>
+            </div>
+            <div className="p-3 bg-yellow-100 rounded-full">
+              <span className="text-2xl">⏳</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Filters */}

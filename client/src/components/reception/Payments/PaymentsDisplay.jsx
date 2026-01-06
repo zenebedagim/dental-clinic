@@ -1,11 +1,17 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../../services/api";
 import useBranch from "../../../hooks/useBranch";
 import usePatient from "../../../hooks/usePatient";
 import DataTable from "../../common/DataTable";
 import PaymentModal from "./PaymentModal";
-import { formatDate } from "../../../utils/tableUtils";
+import { formatDate } from "../shared/DateFormatter";
+import {
+  formatCurrency,
+  toNumber,
+  formatPaymentStatus,
+} from "../shared/PaymentFormatter";
+import requestCache from "../../../utils/requestCache";
 
 const PaymentsDisplay = () => {
   const { selectedBranch } = useBranch();
@@ -19,83 +25,106 @@ const PaymentsDisplay = () => {
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
 
-  const fetchPayments = useCallback(async () => {
-    if (!selectedBranch?.id) {
-      return;
-    }
+  const abortControllerRef = useRef(null);
 
-    // Use AbortController for request cancellation
-    const abortController = new AbortController();
-
-    try {
-      setLoading(true);
-      const response = await api.get("/payments", {
-        params: { branchId: selectedBranch.id },
-        signal: abortController.signal,
-      });
-      const paymentsData = response.data?.data || response.data || [];
-
-      // Handle case where no payments exist yet (empty array is fine)
-      if (!Array.isArray(paymentsData)) {
-        setPayments([]);
+  const fetchPayments = useCallback(
+    async (skipCache = false) => {
+      if (!selectedBranch?.id) {
         return;
       }
 
-      // Map payment data to display format and filter by branch
-      const formattedPayments = paymentsData
-        .filter((payment) => {
-          // Ensure payment belongs to the selected branch
-          const paymentBranchId =
-            payment.appointment?.branchId || payment.branchId;
-          return paymentBranchId === selectedBranch.id;
-        })
-        .map((payment) => ({
-          id: payment.id,
-          appointmentId: payment.appointmentId,
-          patientName: payment.appointment?.patientName || "N/A",
-          patient: payment.appointment?.patient,
-          date: payment.appointment?.date || payment.paymentDate,
-          dentist: payment.appointment?.dentist?.name || "N/A",
-          treatment: payment.appointment?.treatment,
-          amount: payment.amount?.toNumber() || 0,
-          paidAmount: payment.paidAmount?.toNumber() || 0,
-          paymentStatus: payment.paymentStatus,
-          paymentMethod: payment.paymentMethod,
-          paymentDate: payment.paymentDate,
-          showDetailedBilling: payment.showDetailedBilling || false,
-          isHidden: payment.isHidden || false,
-          appointment: payment.appointment,
-          // Include full payment object for detailed billing checks
-          payment: payment,
-        }));
-
-      // Sort by date (most recent first)
-      formattedPayments.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-      // Limit to recent payments (last 50 or last 30 days)
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-      const recentPayments = formattedPayments
-        .filter((payment) => {
-          const paymentDate = new Date(payment.date);
-          return paymentDate >= thirtyDaysAgo;
-        })
-        .slice(0, 50); // Show max 50 recent payments
-
-      setPayments(recentPayments);
-    } catch (err) {
-      // Handle 404 gracefully - just means no payments exist yet
-      if (err.response?.status === 404) {
-        setPayments([]);
-        setError(""); // Clear error, empty state is fine
-      } else {
-        setError(err.response?.data?.message || "Failed to fetch payments");
+      // Cancel previous request if still pending
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedBranch]);
+
+      // Use AbortController for request cancellation
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+
+      // Generate cache key
+      const cacheKey = requestCache.generateKey("/payments", {
+        branchId: selectedBranch.id,
+        limit: 50, // Request backend to limit results
+      });
+
+      try {
+        setLoading(true);
+
+        // Check cache first (unless skipCache is true)
+        if (!skipCache) {
+          const cached = requestCache.get(cacheKey);
+          if (cached !== null) {
+            setPayments(cached);
+            setError("");
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Request backend to filter and limit data for better performance
+        const response = await api.get("/payments", {
+          params: {
+            branchId: selectedBranch.id,
+            isHidden: "false", // Only visible payments
+            limit: 50, // Limit results on backend
+          },
+          signal: abortController.signal,
+        });
+        const paymentsData = response.data?.data || response.data || [];
+
+        // Handle case where no payments exist yet (empty array is fine)
+        if (!Array.isArray(paymentsData)) {
+          setPayments([]);
+          requestCache.set(cacheKey, [], 120000); // Cache empty result (TTL: 2 minutes)
+          return;
+        }
+
+        // Map payment data to display format (backend already filters by branch and limits)
+        const formattedPayments = paymentsData
+          .map((payment) => ({
+            id: payment.id,
+            appointmentId: payment.appointmentId,
+            patientName: payment.appointment?.patientName || "N/A",
+            patient: payment.appointment?.patient,
+            date: payment.appointment?.date || payment.paymentDate,
+            dentist: payment.appointment?.dentist?.name || "N/A",
+            treatment: payment.appointment?.treatment,
+            amount: toNumber(payment.amount),
+            paidAmount: toNumber(payment.paidAmount),
+            paymentStatus: payment.paymentStatus,
+            paymentMethod: payment.paymentMethod,
+            paymentDate: payment.paymentDate,
+            showDetailedBilling: payment.showDetailedBilling || false,
+            isHidden: payment.isHidden || false,
+            appointment: payment.appointment,
+            // Include full payment object for detailed billing checks
+            payment: payment,
+          }))
+          .sort((a, b) => new Date(b.date) - new Date(a.date)); // Sort by date (most recent first)
+
+        // Cache the formatted payments (TTL: 2 minutes)
+        requestCache.set(cacheKey, formattedPayments, 120000);
+        setPayments(formattedPayments);
+      } catch (err) {
+        // Ignore abort errors
+        if (err.name === "AbortError" || err.code === "ERR_CANCELED") return;
+
+        // Handle 404 gracefully - just means no payments exist yet
+        if (err.response?.status === 404) {
+          setPayments([]);
+          setError(""); // Clear error, empty state is fine
+          requestCache.set(cacheKey, [], 120000); // Cache empty result
+        } else {
+          setError(err.response?.data?.message || "Failed to fetch payments");
+        }
+      } finally {
+        setLoading(false);
+        abortControllerRef.current = null;
+      }
+    },
+    [selectedBranch]
+  );
 
   useEffect(() => {
     if (selectedBranch?.id) {
@@ -119,13 +148,6 @@ const PaymentsDisplay = () => {
       );
     };
   }, [selectedBranch, fetchPayments]);
-
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(amount || 0);
-  };
 
   // Filter payments based on filters
   const filteredPayments = useMemo(() => {
@@ -228,18 +250,12 @@ const PaymentsDisplay = () => {
       label: "Payment Status",
       sortable: true,
       render: (value) => {
-        const statusColors = {
-          PAID: "bg-green-100 text-green-800",
-          PARTIAL: "bg-yellow-100 text-yellow-800",
-          UNPAID: "bg-red-100 text-red-800",
-        };
+        const statusConfig = formatPaymentStatus(value || "UNPAID");
         return (
           <span
-            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-              statusColors[value] || "bg-gray-100 text-gray-800"
-            }`}
+            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusConfig.className}`}
           >
-            {value || "UNPAID"}
+            {statusConfig.label}
           </span>
         );
       },
@@ -272,18 +288,6 @@ const PaymentsDisplay = () => {
     );
   }
 
-  if (loading) {
-    return <div className="text-center py-8">Loading payments...</div>;
-  }
-
-  if (error) {
-    return (
-      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-        {error}
-      </div>
-    );
-  }
-
   const handleUpdatePayment = (payment) => {
     setSelectedAppointment(payment.appointment);
     // Set patient in context for history modal
@@ -294,7 +298,13 @@ const PaymentsDisplay = () => {
   };
 
   const handlePaymentSaved = () => {
-    fetchPayments();
+    // Invalidate cache on payment save
+    const cacheKey = requestCache.generateKey("/payments", {
+      branchId: selectedBranch?.id,
+      limit: 50,
+    });
+    requestCache.delete(cacheKey);
+    fetchPayments(true); // Skip cache on updates
   };
 
   return (

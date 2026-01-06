@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import { useParams } from "react-router-dom";
 import api from "../services/api";
 import XrayImageViewer from "../components/common/XrayImageViewer";
 
 const XrayViewerPublic = () => {
   const { token } = useParams();
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [xrayData, setXrayData] = useState(null);
@@ -14,13 +13,7 @@ const XrayViewerPublic = () => {
   const [passwordError, setPasswordError] = useState("");
   const [requiresPassword, setRequiresPassword] = useState(false);
 
-  useEffect(() => {
-    if (token) {
-      fetchSharedXray();
-    }
-  }, [token]);
-
-  const fetchSharedXray = async () => {
+  const fetchSharedXray = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
@@ -50,7 +43,13 @@ const XrayViewerPublic = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token, password]);
+
+  useEffect(() => {
+    if (token) {
+      fetchSharedXray();
+    }
+  }, [token, fetchSharedXray]);
 
   const handlePasswordSubmit = (e) => {
     e.preventDefault();

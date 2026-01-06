@@ -11,23 +11,64 @@ const httpServer = http.createServer(app);
 app.use(compression()); // Enable gzip compression
 
 // CORS configuration - optimized for production
+// Build allowed origins array
+const allowedOrigins = [];
+
+// Add production frontend URL if set
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
+// Add localhost for development (always allow)
+allowedOrigins.push("http://localhost:5173", "http://localhost:5174");
+
+// Determine origin function for CORS
 const corsOptions = {
-  origin: process.env.FRONTEND_URL
-    ? [
-        process.env.FRONTEND_URL,
-        "http://localhost:5173",
-        "http://localhost:5174",
-      ]
-    : process.env.NODE_ENV === "production"
-    ? [process.env.FRONTEND_URL]
-    : true, // Allow all in development
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, Postman, curl)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Check if origin is in allowed list
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      // In production, be strict; in development, allow all
+      if (process.env.NODE_ENV === "production") {
+        console.warn(`CORS: Blocked origin: ${origin}`);
+        callback(new Error("Not allowed by CORS"));
+      } else {
+        callback(null, true);
+      }
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  maxAge: 86400, // 24 hours
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+  exposedHeaders: ["Content-Length", "X-Foo", "X-Bar"],
+  maxAge: 86400, // 24 hours - cache preflight for 24 hours
+  preflightContinue: false,
+  optionsSuccessStatus: 204, // Some legacy browsers (IE11, various SmartTVs) choke on 204
 };
 
+// Apply CORS middleware
 app.use(cors(corsOptions));
+
+// Log CORS configuration on startup (for debugging)
+if (process.env.NODE_ENV === "development" || process.env.LOG_CORS === "true") {
+  console.log("=== CORS Configuration ===");
+  console.log("Allowed Origins:", allowedOrigins);
+  console.log("FRONTEND_URL:", process.env.FRONTEND_URL || "NOT SET");
+  console.log("NODE_ENV:", process.env.NODE_ENV || "development");
+  console.log("==========================");
+}
 
 // Security headers middleware
 app.use((req, res, next) => {
@@ -47,6 +88,10 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Rate limiting - apply to all API routes
+const { apiRateLimiter } = require("./middleware/rateLimiter");
+app.use("/api", apiRateLimiter);
+
 // Routes
 const authRoutes = require("./routes/auth.routes");
 const branchRoutes = require("./routes/branch.routes");
@@ -58,7 +103,6 @@ const historyRoutes = require("./routes/history.routes");
 const patientRoutes = require("./routes/patient.routes");
 const scheduleRoutes = require("./routes/schedule.routes");
 const paymentRoutes = require("./routes/payment.routes");
-const notificationRoutes = require("./routes/notification.routes");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/branches", branchRoutes);
@@ -70,7 +114,6 @@ app.use("/api/history", historyRoutes);
 app.use("/api/patients", patientRoutes);
 app.use("/api/schedules", scheduleRoutes);
 app.use("/api/payments", paymentRoutes);
-app.use("/api/notifications", notificationRoutes);
 
 // Root route for Vercel
 app.get("/", (req, res) => {
@@ -121,29 +164,7 @@ if (process.env.VERCEL !== "1") {
   const { initializeSocketIO } = require("./socket/socketServer");
   initializeSocketIO(httpServer);
   console.log("Socket.io initialized");
-
-  // Start notification worker (only in non-serverless environments)
-  const notificationWorker = require("./workers/notificationWorker");
-  console.log("Notification worker started");
 }
-
-// Initialize metrics service
-const metricsService = require("./services/notificationMetrics.service");
-console.log("Notification metrics service initialized");
-
-// Metrics endpoint
-app.get("/api/notifications/metrics", async (req, res) => {
-  try {
-    const metrics = await metricsService.getComprehensiveMetrics();
-    res.json({ success: true, data: metrics });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error fetching metrics",
-      error: error.message,
-    });
-  }
-});
 
 const PORT = process.env.PORT || 5000;
 

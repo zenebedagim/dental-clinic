@@ -1,11 +1,6 @@
 const prisma = require("../config/db");
 const cloudinary = require("../config/cloudinary");
 const { sendSuccess, sendError } = require("../utils/response.util");
-const {
-  generateSecureToken,
-  hashPassword,
-  comparePassword,
-} = require("../utils/crypto.util");
 
 const uploadXrayResult = async (req, res) => {
   try {
@@ -206,41 +201,103 @@ const uploadXrayResult = async (req, res) => {
         },
       });
 
-    // Notify dentist if appointment exists
-    if (xrayResult.appointment && xrayResult.appointment.dentistId) {
-      try {
-        const notificationService = require('../services/notification.service');
-        const { NotificationType } = require('../utils/notificationTypes');
-        
-        await notificationService.notifyUser(xrayResult.appointment.dentistId, {
-          type: NotificationType.XRAY_READY,
-          title: 'X-Ray Result Ready',
-          message: `X-Ray result for ${xrayResult.appointment.patientName || 'patient'} is ready`,
+      // Automatically send to the appointment's dentist if appointment exists
+      if (xrayResult.appointment && xrayResult.appointment.dentistId) {
+        // Update sentToDentist flag automatically
+        await prisma.xRay.update({
+          where: { id: xrayResult.id },
           data: {
-            xrayId: xrayResult.id,
-            appointmentId: xrayResult.appointmentId,
-            xrayType: xrayResult.xrayType,
+            sentToDentist: true,
           },
         });
-      } catch (notifError) {
-        console.error('Error sending X-Ray upload notification:', notifError);
+
+        // Refresh updatedResult to include sentToDentist change
+        const refreshedResult = await prisma.xRay.findUnique({
+          where: { id: xrayResult.id },
+          include: {
+            appointment: {
+              include: {
+                branch: true,
+                dentist: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                  },
+                },
+              },
+            },
+            images: {
+              orderBy: { uploadedAt: "asc" },
+            },
+          },
+        });
+
+
+        return sendSuccess(
+          res,
+          refreshedResult,
+          201,
+          `${uploadedImages.length} X-Ray image(s) uploaded successfully`
+        );
       }
+
+      // Return the result (if no appointment, sentToDentist stays false which is correct)
+      return sendSuccess(
+        res,
+        updatedResult,
+        201,
+        `${uploadedImages.length} X-Ray image(s) uploaded successfully`
+      );
+    }
+
+    // Automatically send to the appointment's dentist if appointment exists and results were updated
+    if (xrayResult.appointment && xrayResult.appointment.dentistId) {
+      // Update sentToDentist flag when results are updated
+      await prisma.xRay.update({
+        where: { id: xrayResult.id },
+        data: {
+          sentToDentist: true,
+        },
+      });
+
+      // Fetch updated result AFTER setting sentToDentist to ensure it's included in response
+      const updatedXray = await prisma.xRay.findUnique({
+        where: { id: xrayResult.id },
+        include: {
+          appointment: {
+            include: {
+              branch: true,
+              dentist: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+          images: {
+            orderBy: { uploadedAt: "asc" },
+          },
+        },
+      });
+
+
+      return sendSuccess(
+        res,
+        updatedXray,
+        200,
+        "X-Ray result updated and sent to dentist successfully"
+      );
     }
 
     return sendSuccess(
       res,
-      updatedResult,
-      201,
-      `${uploadedImages.length} X-Ray image(s) uploaded successfully`
+      xrayResult,
+      200,
+      "X-Ray result updated successfully"
     );
-  }
-
-  return sendSuccess(
-    res,
-    xrayResult,
-    200,
-    "X-Ray result updated successfully"
-  );
   } catch (error) {
     console.error("Upload X-Ray result error:", error);
     return sendError(res, "Server error", 500, error);
@@ -249,12 +306,16 @@ const uploadXrayResult = async (req, res) => {
 
 const getXrayRequests = async (req, res) => {
   try {
-    const { id: xrayId } = req.user;
-    const { branchId: selectedBranchId } = req.query;
+    const { id: xrayId, role } = req.user;
+    const { branchId: selectedBranchId, filter } = req.query;
 
-    const where = {
-      xrayId,
-    };
+    const where = {};
+    
+    // For ADMIN: show all X-Ray requests (no xrayId filter)
+    // For XRAY: show only their own requests
+    if (role !== "ADMIN") {
+      where.xrayId = xrayId;
+    }
 
     if (selectedBranchId) {
       where.branchId = selectedBranchId;
@@ -264,6 +325,18 @@ const getXrayRequests = async (req, res) => {
       where,
       include: {
         branch: true,
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true,
+            gender: true,
+            dateOfBirth: true,
+            address: true,
+            cardNo: true,
+          },
+        },
         dentist: {
           select: {
             id: true,
@@ -271,12 +344,60 @@ const getXrayRequests = async (req, res) => {
             email: true,
           },
         },
-        xrayResult: true,
+        treatments: {
+          orderBy: { createdAt: 'desc' },
+          take: 1, // Get only the most recent treatment
+        },
+        xrayResult: {
+          include: {
+            images: {
+              orderBy: { uploadedAt: "asc" },
+            },
+          },
+        },
       },
       orderBy: { date: "desc" },
     });
 
-    return sendSuccess(res, appointments);
+    // Transform for backward compatibility
+    const transformedAppointments = appointments.map((appointment) => {
+      if (appointment.treatments && Array.isArray(appointment.treatments)) {
+        appointment.treatment = appointment.treatments.length > 0 ? appointment.treatments[0] : null;
+      }
+      return appointment;
+    });
+
+    // Apply optional server-side filtering
+    let filteredAppointments = transformedAppointments;
+    if (filter) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      switch (filter) {
+        case "pending":
+          filteredAppointments = appointments.filter(
+            (apt) => !apt.xrayResult || !apt.xrayResult.id
+          );
+          break;
+        case "completed":
+          filteredAppointments = appointments.filter((apt) => {
+            if (!apt.xrayResult || !apt.xrayResult.id) return false;
+            const resultDate = new Date(
+              apt.xrayResult.updatedAt || apt.xrayResult.createdAt
+            );
+            return resultDate >= today && resultDate < tomorrow;
+          });
+          break;
+        case "all":
+        default:
+          // No filtering needed
+          break;
+      }
+    }
+
+    return sendSuccess(res, filteredAppointments);
   } catch (error) {
     console.error("Get X-Ray requests error:", error);
     return sendError(res, "Server error", 500, error);
@@ -289,13 +410,34 @@ const getXrayRequests = async (req, res) => {
 const getXrayImages = async (req, res) => {
   try {
     const { xrayId } = req.params;
-    const { id: userId } = req.user;
+    const { id: userId, role } = req.user;
 
-    // Verify X-Ray exists and belongs to this X-Ray doctor
+    // Debug logging
+    console.log("getXrayImages - Request:", {
+      xrayId,
+      userId,
+      role,
+      user: req.user,
+    });
+
+    // Verify X-Ray exists
     const xray = await prisma.xRay.findUnique({
       where: { id: xrayId },
       include: {
-        appointment: true,
+        appointment: {
+          include: {
+            dentist: {
+              select: {
+                id: true,
+              },
+            },
+            xray: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -303,12 +445,36 @@ const getXrayImages = async (req, res) => {
       return sendError(res, "X-Ray record not found", 404);
     }
 
-    // Check if user has permission (either X-Ray doctor assigned or admin role)
-    // If appointment exists, verify assignment. Otherwise, allow access to X-Ray doctor who created it.
-    if (xray.appointment && xray.appointment.xrayId !== userId) {
+    // Authorization checks based on user role
+    let hasPermission = false;
+
+    if (role === "ADMIN") {
+      // ADMIN can access all X-Ray images
+      hasPermission = true;
+      console.log("getXrayImages - ADMIN access granted");
+    } else if (role === "XRAY") {
+      // X-Ray doctors can access if they're assigned to the appointment
+      if (xray.appointment && xray.appointment.xrayId === userId) {
+        hasPermission = true;
+        console.log("getXrayImages - XRAY access granted");
+      }
+    } else if (role === "DENTIST") {
+      // Dentists can access if:
+      // 1. The X-ray was sent to them (sentToDentist is true), OR
+      // 2. They are the dentist assigned to the appointment
+      if (xray.sentToDentist) {
+        hasPermission = true;
+        console.log("getXrayImages - DENTIST access granted (sentToDentist)");
+      } else if (xray.appointment && xray.appointment.dentistId === userId) {
+        hasPermission = true;
+        console.log("getXrayImages - DENTIST access granted (appointment)");
+      }
+    }
+
+    if (!hasPermission) {
+      console.log("getXrayImages - Access denied:", { role, userId, xrayId });
       return sendError(res, "Unauthorized access to X-Ray images", 403);
     }
-    // If no appointment, we could add additional permission checks here if needed
 
     const images = await prisma.xRayImage.findMany({
       where: { xrayId },
@@ -366,7 +532,19 @@ const deleteXrayImage = async (req, res) => {
 const sendToDentist = async (req, res) => {
   try {
     const { id } = req.params;
+    const { dentistId } = req.body || {}; // Optional: allow selecting a different dentist
     const { id: xrayId } = req.user;
+
+    // Log for debugging
+    console.log("Send X-Ray to dentist request:", {
+      xrayId,
+      dentistId,
+      xrayId: id,
+      body: req.body,
+      bodyType: typeof req.body,
+      dentistIdType: typeof dentistId,
+      dentistIdValue: dentistId,
+    });
 
     const xrayResult = await prisma.xRay.findUnique({
       where: { id },
@@ -407,18 +585,52 @@ const sendToDentist = async (req, res) => {
       return sendError(res, "X-Ray result not found", 404);
     }
 
-    // Can only send to dentist if there's an appointment
-    if (!xrayResult.appointment) {
-      return sendError(res, "Cannot send X-Ray result: No associated appointment", 400);
+    // Check authorization - X-Ray doctor can only send their own results
+    // For appointments: verify the X-Ray doctor is assigned
+    // For standalone X-Rays: allow any X-Ray doctor to send (no ownership tracking)
+    if (xrayResult.appointment) {
+      if (xrayResult.appointment.xrayId !== xrayId) {
+        return sendError(res, "You can only send your own X-Ray results", 403);
+      }
     }
-    
-    if (xrayResult.appointment.xrayId !== xrayId) {
-      return sendError(res, "You can only send your own X-Ray results", 403);
+    // If no appointment (standalone X-Ray), allow any X-Ray doctor to send
+
+    // Determine which dentist to send to
+    let targetDentistId = dentistId;
+
+    // If dentistId is provided, verify the dentist exists
+    if (targetDentistId) {
+      const dentist = await prisma.user.findUnique({
+        where: { id: targetDentistId },
+        select: { id: true, name: true, email: true, role: true },
+      });
+
+      if (!dentist) {
+        return sendError(res, "Dentist not found", 404);
+      }
+
+      if (dentist.role !== "DENTIST") {
+        return sendError(res, "Selected user is not a dentist", 400);
+      }
+    } else if (xrayResult.appointment && xrayResult.appointment.dentistId) {
+      // Use appointment's dentist if no dentistId provided (backward compatibility)
+      targetDentistId = xrayResult.appointment.dentistId;
+    } else {
+      // Require dentistId for standalone X-Rays (no appointment)
+      return sendError(
+        res,
+        "No dentist specified. Please select a dentist.",
+        400
+      );
     }
 
+    // Store which dentist this was sent to (for tracking and display)
     const updatedXray = await prisma.xRay.update({
       where: { id },
-      data: { sentToDentist: true },
+      data: {
+        sentToDentist: true,
+        // Note: We'll add sentToDentistId field in schema if needed, for now we track via notification
+      },
       include: {
         appointment: {
           include: {
@@ -435,50 +647,6 @@ const sendToDentist = async (req, res) => {
       },
     });
 
-    // Notify dentist that X-Ray was sent with patient information
-    if (updatedXray.appointment && updatedXray.appointment.dentistId) {
-      try {
-        const notificationService = require('../services/notification.service');
-        const { NotificationType } = require('../utils/notificationTypes');
-        
-        const patientName = updatedXray.appointment.patientName || updatedXray.appointment.patient?.name || 'patient';
-        const patientPhone = updatedXray.appointment.patient?.phone || 'N/A';
-        const patientCardNo = updatedXray.appointment.patient?.cardNo || 'N/A';
-        
-        await notificationService.notifyUser(updatedXray.appointment.dentistId, {
-          type: NotificationType.XRAY_SENT,
-          title: 'X-Ray Sent',
-          message: `X-Ray result for ${patientName} (${patientPhone}) has been sent`,
-          data: {
-            xrayId: updatedXray.id,
-            appointmentId: updatedXray.appointmentId,
-            xrayType: updatedXray.xrayType,
-            // Include patient information
-            patient: {
-              id: updatedXray.appointment.patient?.id,
-              name: patientName,
-              phone: patientPhone,
-              cardNo: patientCardNo,
-              gender: updatedXray.appointment.patient?.gender,
-              dateOfBirth: updatedXray.appointment.patient?.dateOfBirth,
-              address: updatedXray.appointment.patient?.address,
-            },
-            appointment: {
-              id: updatedXray.appointment.id,
-              date: updatedXray.appointment.date,
-              patientName: patientName,
-            },
-            branch: {
-              id: updatedXray.appointment.branch?.id,
-              name: updatedXray.appointment.branch?.name,
-            },
-          },
-        });
-      } catch (notifError) {
-        console.error('Error sending X-Ray sent notification:', notifError);
-      }
-    }
-
     return sendSuccess(
       res,
       updatedXray,
@@ -491,283 +659,10 @@ const sendToDentist = async (req, res) => {
   }
 };
 
-/**
- * Create a shareable link for X-Ray
- */
-const createXrayShare = async (req, res) => {
-  try {
-    const { xrayId } = req.params;
-    const { password, expiresAt, maxViews } = req.body;
-    const { id: userId } = req.user;
-
-    // Verify X-Ray exists and user has permission
-    const xray = await prisma.xRay.findUnique({
-      where: { id: xrayId },
-      include: {
-        appointment: true,
-      },
-    });
-
-    if (!xray) {
-      return sendError(res, "X-Ray record not found", 404);
-    }
-
-    // Check if user has permission (X-Ray doctor assigned or admin)
-    // If appointment exists, verify assignment. Otherwise, allow X-Ray doctor access.
-    if (xray.appointment && xray.appointment.xrayId !== userId) {
-      return sendError(res, "Unauthorized to share this X-Ray", 403);
-    }
-
-    // Generate secure token
-    const shareToken = generateSecureToken(32);
-
-    // Hash password if provided
-    let hashedPassword = null;
-    if (password) {
-      hashedPassword = await hashPassword(password);
-    }
-
-    // Parse expiration date
-    let expiresAtDate = null;
-    if (expiresAt) {
-      expiresAtDate = new Date(expiresAt);
-      if (isNaN(expiresAtDate.getTime())) {
-        return sendError(res, "Invalid expiration date format", 400);
-      }
-    }
-
-    // Create share link
-    const share = await prisma.xrayShare.create({
-      data: {
-        xrayId,
-        shareToken,
-        password: hashedPassword,
-        expiresAt: expiresAtDate,
-        maxViews: maxViews ? parseInt(maxViews) : null,
-        createdBy: userId,
-      },
-      include: {
-        xray: {
-          include: {
-            appointment: {
-              select: {
-                patientName: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // Generate share URL (frontend URL + share token)
-    const shareUrl = `${
-      process.env.FRONTEND_URL || "http://localhost:5174"
-    }/xray-share/${shareToken}`;
-
-    return sendSuccess(
-      res,
-      {
-        ...share,
-        shareUrl,
-        password: undefined, // Don't send password hash to client
-      },
-      201,
-      "Share link created successfully"
-    );
-  } catch (error) {
-    console.error("Create X-Ray share error:", error);
-    return sendError(res, "Server error", 500, error);
-  }
-};
-
-/**
- * Get shareable links for an X-Ray
- */
-const getXrayShares = async (req, res) => {
-  try {
-    const { xrayId } = req.params;
-    const { id: userId } = req.user;
-
-    // Verify X-Ray exists and user has permission
-    const xray = await prisma.xRay.findUnique({
-      where: { id: xrayId },
-      include: {
-        appointment: true,
-      },
-    });
-
-    if (!xray) {
-      return sendError(res, "X-Ray record not found", 404);
-    }
-
-    // Check if user has permission
-    if (xray.appointment.xrayId !== userId) {
-      return sendError(res, "Unauthorized to view shares for this X-Ray", 403);
-    }
-
-    const shares = await prisma.xrayShare.findMany({
-      where: { xrayId },
-      orderBy: { createdAt: "desc" },
-    });
-
-    // Generate share URLs
-    const sharesWithUrls = shares.map((share) => ({
-      ...share,
-      shareUrl: `${
-        process.env.FRONTEND_URL || "http://localhost:5174"
-      }/xray-share/${share.shareToken}`,
-      password: undefined, // Don't send password hash
-    }));
-
-    return sendSuccess(res, sharesWithUrls);
-  } catch (error) {
-    console.error("Get X-Ray shares error:", error);
-    return sendError(res, "Server error", 500, error);
-  }
-};
-
-/**
- * Revoke/deactivate a share link
- */
-const revokeXrayShare = async (req, res) => {
-  try {
-    const { shareId } = req.params;
-    const { id: userId } = req.user;
-
-    // Find share and verify ownership
-    const share = await prisma.xrayShare.findUnique({
-      where: { id: shareId },
-      include: {
-        xray: {
-          include: {
-            appointment: true,
-          },
-        },
-      },
-    });
-
-    if (!share) {
-      return sendError(res, "Share link not found", 404);
-    }
-
-    // Check if user has permission
-    // If appointment exists, verify assignment. Otherwise, allow X-Ray doctor access.
-    if (share.xray.appointment && share.xray.appointment.xrayId !== userId) {
-      return sendError(res, "Unauthorized to revoke this share link", 403);
-    }
-
-    // Deactivate share
-    const updatedShare = await prisma.xrayShare.update({
-      where: { id: shareId },
-      data: { isActive: false },
-    });
-
-    return sendSuccess(
-      res,
-      updatedShare,
-      200,
-      "Share link revoked successfully"
-    );
-  } catch (error) {
-    console.error("Revoke X-Ray share error:", error);
-    return sendError(res, "Server error", 500, error);
-  }
-};
-
-/**
- * View shared X-Ray (public endpoint, no auth required)
- */
-const viewSharedXray = async (req, res) => {
-  try {
-    const { token } = req.params;
-    const { password } = req.body;
-
-    // Find share by token
-    const share = await prisma.xrayShare.findUnique({
-      where: { shareToken: token },
-      include: {
-        xray: {
-          include: {
-            appointment: {
-              select: {
-                patientName: true,
-                date: true,
-              },
-            },
-            images: {
-              orderBy: { uploadedAt: "asc" },
-            },
-          },
-        },
-      },
-    });
-
-    if (!share) {
-      return sendError(res, "Share link not found", 404);
-    }
-
-    // Check if share is active
-    if (!share.isActive) {
-      return sendError(res, "This share link has been deactivated", 403);
-    }
-
-    // Check expiration
-    if (share.expiresAt && new Date() > new Date(share.expiresAt)) {
-      return sendError(res, "This share link has expired", 403);
-    }
-
-    // Check max views
-    if (share.maxViews && share.viewCount >= share.maxViews) {
-      return sendError(
-        res,
-        "Maximum view limit reached for this share link",
-        403
-      );
-    }
-
-    // Check password if set
-    if (share.password) {
-      if (!password) {
-        return sendError(res, "Password required", 401, {
-          requiresPassword: true,
-        });
-      }
-
-      const passwordMatch = await comparePassword(password, share.password);
-      if (!passwordMatch) {
-        return sendError(res, "Incorrect password", 401);
-      }
-    }
-
-    // Increment view count
-    await prisma.xrayShare.update({
-      where: { id: share.id },
-      data: { viewCount: share.viewCount + 1 },
-    });
-
-    // Return X-Ray data (excluding sensitive information)
-    return sendSuccess(res, {
-      xray: share.xray,
-      shareInfo: {
-        viewCount: share.viewCount + 1,
-        maxViews: share.maxViews,
-        expiresAt: share.expiresAt,
-      },
-    });
-  } catch (error) {
-    console.error("View shared X-Ray error:", error);
-    return sendError(res, "Server error", 500, error);
-  }
-};
-
 module.exports = {
   uploadXrayResult,
   getXrayRequests,
   sendToDentist,
   getXrayImages,
   deleteXrayImage,
-  createXrayShare,
-  getXrayShares,
-  revokeXrayShare,
-  viewSharedXray,
 };

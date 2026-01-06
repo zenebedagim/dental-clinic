@@ -43,14 +43,13 @@ model User {
   updatedAt      DateTime @updatedAt
 
   // Relations
-  appointmentsAsDentist        Appointment[]        @relation("DentistAppointments")
-  appointmentsAsXray           Appointment[]        @relation("XrayAppointments")
-  appointmentsAsReceptionist   Appointment[]        @relation("ReceptionistAppointments")
-  detailedBillingEnabled        Payment[]            @relation("DetailedBillingEnabled")
-  schedules                     DoctorSchedule[]
-  availability                  DoctorAvailability[]
-  notifications                 Notification[]       @relation("UserNotifications")
-  notificationPreferences       NotificationPreference[] @relation("UserNotificationPreferences")
+  appointmentsAsDentist      Appointment[]        @relation("DentistAppointments")
+  appointmentsAsXray         Appointment[]        @relation("XrayAppointments")
+  appointmentsAsReceptionist Appointment[]        @relation("ReceptionistAppointments")
+  detailedBillingEnabled     Payment[]            @relation("DetailedBillingEnabled")
+  schedules                  DoctorSchedule[]
+  availability               DoctorAvailability[]
+  auditLogs                  AuditLog[]
 
   @@index([email])
   @@index([branchId])
@@ -70,6 +69,8 @@ model Branch {
   users           User[]
   appointments    Appointment[]
   doctorSchedules DoctorSchedule[]
+  workingHours    BranchWorkingHours[]
+  auditLogs       AuditLog[]
 
   @@index([isActive])
 }
@@ -97,28 +98,28 @@ model Patient {
 }
 
 model Appointment {
-  id            String            @id @default(uuid())
-  patientId     String?
-  patient       Patient?          @relation(fields: [patientId], references: [id], onDelete: SetNull)
-  patientName   String // Keep for backward compatibility
-  branchId      String
-  branch        Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  dentistId     String
-  dentist       User              @relation("DentistAppointments", fields: [dentistId], references: [id], onDelete: Cascade)
-  xrayId        String?
-  xray          User?             @relation("XrayAppointments", fields: [xrayId], references: [id], onDelete: SetNull)
+  id             String            @id @default(uuid())
+  patientId      String // REQUIRED: Every appointment must be linked to a patient
+  patient        Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patientName    String // Keep for backward compatibility (derived from patient.name)
+  branchId       String
+  branch         Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  dentistId      String
+  dentist        User              @relation("DentistAppointments", fields: [dentistId], references: [id], onDelete: Cascade)
+  xrayId         String?
+  xray           User?             @relation("XrayAppointments", fields: [xrayId], references: [id], onDelete: SetNull)
   receptionistId String?
-  receptionist  User?             @relation("ReceptionistAppointments", fields: [receptionistId], references: [id], onDelete: SetNull)
-  date          DateTime
-  status        AppointmentStatus @default(PENDING)
-  visitReason   String? // Reason for visit / complaint
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  receptionist   User?             @relation("ReceptionistAppointments", fields: [receptionistId], references: [id], onDelete: SetNull)
+  date           DateTime
+  status         AppointmentStatus @default(PENDING)
+  visitReason    String? // Reason for visit / complaint
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
   // Relations
-  treatment  Treatment?
+  treatments Treatment[]
   xrayResult XRay?
-  payment    Payment?
+  payments   Payment[] // Changed from Payment? to Payment[] to allow multiple payments
 
   @@index([branchId])
   @@index([dentistId])
@@ -132,7 +133,7 @@ model Appointment {
 
 model Treatment {
   id            String          @id @default(uuid())
-  appointmentId String          @unique
+  appointmentId String
   appointment   Appointment     @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   diagnosis     String?
   treatmentPlan String?
@@ -147,7 +148,7 @@ model Treatment {
   socialHistory         String?
 
   // Objective - Structured Data (JSON)
-  vitalSigns    Json? // {temperature, bpSystolic, bpDiastolic, pulseRate, respiratoryRate, weight, height}
+  vitalSigns     Json? // {temperature, bpSystolic, bpDiastolic, pulseRate, respiratoryRate, weight, height}
   // Ethiopian Dental Clinic Format:
   // clinicalExam: {
   //   generalAppearance: {levelOfConsciousness, bodyBuildPosture, signsOfPainDistress, nutritionalStatus, pallorJaundiceCyanosis, facialSymmetry, swellingDeformity},
@@ -156,8 +157,9 @@ model Treatment {
   //   provisionalFindings: string,
   //   // Legacy: extraoralFindings, intraoralSoftTissue, periodontalStatus, occlusionFindings
   // }
-  clinicalExam  Json? 
-  clinicalTests Json? // {pulpVitality, percussion, thermalSensitivity, mobility}
+  clinicalExam   Json?
+  clinicalTests  Json? // {pulpVitality, percussion, thermalSensitivity, mobility}
+  investigations Json? // {types: [], other: ""} - X-Ray/Investigation types and custom notes
 
   // Assessment
   diagnosisCode      String?
@@ -165,13 +167,13 @@ model Treatment {
   diagnosisNotes     String?
 
   // Plan - Structured Data
-  affectedTeeth String[] @default([]) // Array of tooth numbers/letters (Universal notation)
-  toolsUsed     String[] @default([]) // Array of tool IDs used
-  procedureLogs Json? // Array of {code, description, tooth, duration, anesthesia, notes}
-  postTreatment Json? // {painLevel, complications, instructions, medications, followUpDate}
-  notes         String?
+  affectedTeeth    String[] @default([]) // Array of tooth numbers/letters (Universal notation)
+  toolsUsed        String[] @default([]) // Array of tool IDs used
+  procedureLogs    Json? // Array of {code, description, tooth, duration, anesthesia, notes}
+  postTreatment    Json? // {painLevel, complications, instructions, medications, followUpDate}
+  notes            String?
   dentistSignature String?
-  totalCost     Decimal? // Total cost of treatment (calculated from procedures)
+  totalCost        Decimal? // Total cost of treatment (calculated from procedures)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -187,18 +189,17 @@ model XRay {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   result        String?
   imageUrl      String? // Deprecated: Keep for backward compatibility, use images relation instead
-  sentToDentist Boolean     @default(false)
+  sentToDentist Boolean      @default(false)
 
   // Enhanced X-Ray Fields
   xrayType  String? // PANORAMIC, BITEWING, PERIAPICAL, OCCLUSAL, CEPHALOMETRIC, CT_SCAN, CBCT
   teeth     String[] @default([]) // Array of tooth numbers/letters visible in X-Ray
-  findings  Json? // Structured findings per tooth: [{tooth, findings, condition, recommendations}]
+  findings  Json? // X-Ray findings data (flexible JSON structure)
   technique String? // X-Ray technique used
   urgency   String? // Severity/Urgency rating
 
   // Relations
   images XRayImage[]
-  shares XrayShare[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -219,25 +220,6 @@ model XRayImage {
 
   @@index([xrayId])
   @@index([imageType])
-}
-
-model XrayShare {
-  id         String    @id @default(uuid())
-  xrayId     String
-  xray       XRay      @relation(fields: [xrayId], references: [id], onDelete: Cascade)
-  shareToken String    @unique // Unique token for the share link
-  password   String? // Optional password hash for password-protected shares
-  expiresAt  DateTime? // Optional expiration date
-  maxViews   Int? // Optional maximum number of views
-  viewCount  Int       @default(0) // Track how many times it's been viewed
-  isActive   Boolean   @default(true) // Can be deactivated without deleting
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  createdBy  String // User ID who created the share
-
-  @@index([xrayId])
-  @@index([shareToken])
-  @@index([isActive])
 }
 
 model DoctorSchedule {
@@ -283,21 +265,21 @@ enum PaymentStatus {
 }
 
 model Payment {
-  id                      String        @id @default(uuid())
-  appointmentId            String        @unique
-  appointment              Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  amount                  Decimal       // Total amount due
-  paidAmount              Decimal       @default(0) // Amount paid so far
-  paymentStatus            PaymentStatus @default(UNPAID)
-  paymentDate             DateTime?     // Date when payment was made/updated
-  paymentMethod           String?       // Payment method: CASH, CARD, MOBILE, etc.
-  showDetailedBilling     Boolean       @default(false) // Controls visibility of detailed billing section
-  detailedBillingEnabledBy String?      // Dentist who enabled detailed billing
-  detailedBillingEnabledByUser User?    @relation("DetailedBillingEnabled", fields: [detailedBillingEnabledBy], references: [id], onDelete: SetNull)
-  isHidden                Boolean       @default(false) // Hidden payments (reception can toggle visibility)
-  notes                   String?
-  createdAt               DateTime      @default(now())
-  updatedAt               DateTime      @updatedAt
+  id                           String        @id @default(uuid())
+  appointmentId                String        // Removed @unique to allow multiple payments per appointment
+  appointment                  Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  amount                       Decimal // Total amount due
+  paidAmount                   Decimal       @default(0) // Amount paid so far
+  paymentStatus                PaymentStatus @default(UNPAID)
+  paymentDate                  DateTime? // Date when payment was made/updated
+  paymentMethod                String? // Payment method: CASH, CARD, MOBILE, etc.
+  showDetailedBilling          Boolean       @default(false) // Controls visibility of detailed billing section
+  detailedBillingEnabledBy     String? // Dentist who enabled detailed billing
+  detailedBillingEnabledByUser User?         @relation("DetailedBillingEnabled", fields: [detailedBillingEnabledBy], references: [id], onDelete: SetNull)
+  isHidden                     Boolean       @default(false) // Hidden payments (reception can toggle visibility)
+  notes                        String?
+  createdAt                    DateTime      @default(now())
+  updatedAt                    DateTime      @updatedAt
 
   @@index([appointmentId])
   @@index([paymentStatus])
@@ -306,100 +288,38 @@ model Payment {
   @@index([isHidden])
 }
 
-enum NotificationPriority {
-  LOW
-  NORMAL
-  HIGH
-  CRITICAL
+model BranchWorkingHours {
+  id        String   @id @default(uuid())
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  dayOfWeek Int      // 0-6 (Sunday-Saturday)
+  startTime String   // HH:mm format
+  endTime   String   // HH:mm format
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, dayOfWeek, startTime])
+  @@index([branchId])
 }
 
-enum NotificationType {
-  APPOINTMENT_CREATED
-  APPOINTMENT_UPDATED
-  APPOINTMENT_CANCELLED
-  XRAY_READY
-  XRAY_SENT
-  PAYMENT_CREATED
-  PAYMENT_UPDATED
-  TREATMENT_COMPLETED
-  TREATMENT_COST_UPDATED
-  DETAILED_BILLING_ENABLED
-}
-
-enum NotificationLogEvent {
-  SENT
-  DELIVERED
-  READ
-  ACKNOWLEDGED
-  FAILED
-  ESCALATED
-}
-
-model Notification {
-  id            String             @id @default(uuid())
-  userId        String
-  user          User               @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
-  type          NotificationType
-  priority      NotificationPriority @default(NORMAL)
-  title         String
-  message       String
-  eventId       String             @unique // UUID for idempotency
-  version       String             @default("1.0")
-  read          Boolean            @default(false)
-  delivered     Boolean            @default(false)
-  acknowledged  Boolean            @default(false)
-  escalated     Boolean            @default(false)
-  data          Json?              // Additional data (appointmentId, paymentId, etc.)
-  actionUrl     String?            // Route to navigate on click
-  expiresAt     DateTime?          // For time-sensitive notifications
-  requiresAck   Boolean            @default(false)
-  retryCount    Int                @default(0)
-  maxRetries    Int                @default(3)
-  createdAt     DateTime           @default(now())
-  readAt        DateTime?
-  deliveredAt   DateTime?
-  acknowledgedAt DateTime?
-
-  // Relations
-  logs          NotificationLog[]
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?  // User who performed the action (nullable to preserve audit trail when user is deleted)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action      String   // CREATE, UPDATE, DELETE, LOGIN, etc.
+  entityType  String   // User, Appointment, Treatment, Payment, etc.
+  entityId    String?  // ID of affected entity
+  branchId    String?  // Branch context
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  oldData     Json?    // Previous state (for updates/deletes)
+  newData     Json?    // New state (for creates/updates)
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
 
   @@index([userId])
-  @@index([type])
-  @@index([priority])
-  @@index([read])
-  @@index([delivered])
+  @@index([entityType, entityId])
+  @@index([branchId])
   @@index([createdAt])
-  @@index([eventId])
-}
-
-model NotificationPreference {
-  id              String           @id @default(uuid())
-  userId          String
-  user            User             @relation("UserNotificationPreferences", fields: [userId], references: [id], onDelete: Cascade)
-  notificationType NotificationType
-  enabled         Boolean          @default(true)
-  soundEnabled    Boolean          @default(true)
-  toastEnabled     Boolean          @default(true)
-  workHoursStart  String?          // Format: "HH:mm" (e.g., "09:00")
-  workHoursEnd    String?          // Format: "HH:mm" (e.g., "17:00")
-  doNotDisturb    Boolean          @default(false)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-
-  @@unique([userId, notificationType])
-  @@index([userId])
-  @@index([notificationType])
-}
-
-model NotificationLog {
-  id             String              @id @default(uuid())
-  notificationId String
-  notification   Notification        @relation(fields: [notificationId], references: [id], onDelete: Cascade)
-  event          NotificationLogEvent
-  timestamp      DateTime            @default(now())
-  metadata       Json?               // Additional event metadata
-
-  @@index([notificationId])
-  @@index([event])
-  @@index([timestamp])
 }

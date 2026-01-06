@@ -109,11 +109,6 @@ export const PatientProvider = ({ children }) => {
     [patients]
   );
 
-  // Get recent patients (last 10)
-  const getRecentPatients = useCallback(() => {
-    return patients.slice(0, 10);
-  }, [patients]);
-
   const value = {
     // State
     patients,
@@ -132,7 +127,6 @@ export const PatientProvider = ({ children }) => {
 
     // Getters
     getPatientById,
-    getRecentPatients,
   };
 
   return (

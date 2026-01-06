@@ -19,12 +19,6 @@ const Login = () => {
         const user = JSON.parse(userStr);
         // Only redirect if user data is valid and has a role
         if (user && user.role) {
-        // Admin users redirect to admin dashboard (no branch selection needed)
-        if (user.role === "ADMIN") {
-          navigate("/admin", { replace: true });
-          return;
-        }
-        
         const roleRoutes = {
           RECEPTION: "/reception",
           DENTIST: "/dentist",
@@ -33,8 +27,8 @@ const Login = () => {
         };
         const redirectPath = roleRoutes[user.role];
         if (redirectPath) {
-          // Ensure branch is stored (not needed for admin)
-          if (user.branch && user.role !== "ADMIN") {
+          // Ensure branch is stored
+          if (user.branch) {
             localStorage.setItem("selectedBranch", JSON.stringify(user.branch));
           }
           navigate(redirectPath, { replace: true });
@@ -66,10 +60,13 @@ const Login = () => {
       localStorage.setItem("token", token);
       localStorage.setItem("user", JSON.stringify(user));
 
-      // Store branch from user object automatically (not needed for admin)
-      if (user.branch && user.role !== "ADMIN") {
+      // Store branch from user object automatically
+      if (user.branch) {
         localStorage.setItem("selectedBranch", JSON.stringify(user.branch));
       }
+
+      // Dispatch custom event to trigger socket re-initialization
+      window.dispatchEvent(new Event("tokenChanged"));
 
       // Redirect directly to role dashboard (branch is auto-assigned from user account)
       const roleRoutes = {
@@ -170,24 +167,6 @@ const Login = () => {
           <div className="space-y-2 text-xs">
             <div className="flex items-center justify-between bg-white p-2 rounded border border-blue-100">
               <div className="flex-1">
-                <div className="font-medium text-gray-700">Admin</div>
-                <div className="text-gray-600">
-                  admin@clinic.com / admin123
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setEmail("admin@clinic.com");
-                  setPassword("admin123");
-                }}
-                className="ml-2 px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
-              >
-                Use
-              </button>
-            </div>
-            <div className="flex items-center justify-between bg-white p-2 rounded border border-blue-100">
-              <div className="flex-1">
                 <div className="font-medium text-gray-700">Reception</div>
                 <div className="text-gray-600">
                   reception@clinic.com / reception123
@@ -225,13 +204,31 @@ const Login = () => {
             <div className="flex items-center justify-between bg-white p-2 rounded border border-blue-100">
               <div className="flex-1">
                 <div className="font-medium text-gray-700">X-Ray Doctor</div>
-                <div className="text-gray-600">xray@clinic.com / xray123</div>
+                <div className="text-gray-600">xray@clinic.com /xray123 </div>
               </div>
               <button
                 type="button"
                 onClick={() => {
                   setEmail("xray@clinic.com");
                   setPassword("xray123");
+                }}
+                className="ml-2 px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+              >
+                Use
+              </button>
+            </div>
+            <div className="flex items-center justify-between bg-white p-2 rounded border border-blue-100">
+              <div className="flex-1">
+                <div className="font-medium text-gray-700">Administrator</div>
+                <div className="text-gray-600">
+                  admin@clinic.com / admin123
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEmail("admin@clinic.com");
+                  setPassword("admin123");
                 }}
                 className="ml-2 px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
               >

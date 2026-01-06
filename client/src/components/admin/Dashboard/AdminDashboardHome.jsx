@@ -1,156 +1,69 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import api from "../../../services/api";
+import { Link } from "react-router-dom";
 
 const AdminDashboardHome = () => {
-  const navigate = useNavigate();
-  const [stats, setStats] = useState({
-    totalBranches: 0,
-    activeBranches: 0,
-    archivedBranches: 0,
-    totalUsers: 0,
-  });
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchStats();
-  }, []);
-
-  const fetchStats = async () => {
-    try {
-      setLoading(true);
-
-      // Fetch branches
-      const branchesResponse = await api.get("/branches", {
-        params: { includeArchived: true },
-      });
-      const branches =
-        branchesResponse.data?.data || branchesResponse.data || [];
-      const allBranches = Array.isArray(branches) ? branches : [];
-
-      // Fetch users
-      const usersResponse = await api.get("/users");
-      const users = usersResponse.data?.data || usersResponse.data || [];
-      const allUsers = Array.isArray(users) ? users : [];
-
-      setStats({
-        totalBranches: allBranches.length,
-        activeBranches: allBranches.filter((b) => b.isActive).length,
-        archivedBranches: allBranches.filter((b) => !b.isActive).length,
-        totalUsers: allUsers.length,
-      });
-    } catch (err) {
-      console.error("Error fetching stats:", err);
-      // If it's a 401, don't try to fetch - let ProtectedRoute handle redirect
-      if (err.response?.status === 401) {
-        // Token is invalid, ProtectedRoute will redirect to login
-        return;
-      }
-      // For other errors, show empty stats
-      setStats({
-        totalBranches: 0,
-        activeBranches: 0,
-        archivedBranches: 0,
-        totalUsers: 0,
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const statCards = [
-    {
-      title: "Total Branches",
-      value: stats.totalBranches,
-      icon: "🏢",
-      color: "bg-blue-500",
-      onClick: () => navigate("/admin/branches"),
-    },
-    {
-      title: "Active Branches",
-      value: stats.activeBranches,
-      icon: "✅",
-      color: "bg-green-500",
-      onClick: () => navigate("/admin/branches"),
-    },
-    {
-      title: "Archived Branches",
-      value: stats.archivedBranches,
-      icon: "📦",
-      color: "bg-gray-500",
-      onClick: () => navigate("/admin/branches"),
-    },
-    {
-      title: "Total Users",
-      value: stats.totalUsers,
-      icon: "👥",
-      color: "bg-purple-500",
-    },
-  ];
-
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          Manage branches and system settings
+        <h1 className="text-2xl font-bold text-gray-900 md:text-3xl">
+          Admin Dashboard
+        </h1>
+        <p className="mt-2 text-sm text-gray-600 md:text-base">
+          Manage system settings and branches
         </p>
       </div>
 
-      {loading ? (
-        <div className="text-center py-12 text-gray-500">
-          Loading statistics...
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {/* Quick Actions */}
+        <div className="p-6 bg-white rounded-lg shadow-md">
+          <h2 className="mb-4 text-lg font-bold text-gray-900 md:text-xl">
+            Quick Actions
+          </h2>
+          <div className="space-y-3">
+            <Link
+              to="/admin/branches"
+              className="block w-full px-4 py-3 text-center text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+            >
+              🏢 Manage Branches
+            </Link>
+            <Link
+              to="/admin/reception"
+              className="block w-full px-4 py-3 text-center text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            >
+              👥 Reception Management
+            </Link>
+            <Link
+              to="/admin/dentist"
+              className="block w-full px-4 py-3 text-center text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors font-medium"
+            >
+              🦷 Dentist Management
+            </Link>
+            <Link
+              to="/admin/xray"
+              className="block w-full px-4 py-3 text-center text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors font-medium"
+            >
+              📷 X-Ray Management
+            </Link>
+          </div>
         </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {statCards.map((stat, index) => (
-              <div
-                key={index}
-                onClick={stat.onClick}
-                className={`${
-                  stat.onClick
-                    ? "cursor-pointer hover:shadow-lg transition-shadow"
-                    : ""
-                } bg-white rounded-lg shadow p-6`}
-              >
-                <div className="flex items-center">
-                  <div
-                    className={`${stat.color} rounded-lg p-3 text-white text-2xl`}
-                  >
-                    {stat.icon}
-                  </div>
-                  <div className="ml-4">
-                    <p className="text-sm font-medium text-gray-600">
-                      {stat.title}
-                    </p>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {stat.value}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
 
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">
-              Quick Actions
-            </h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <button
-                onClick={() => navigate("/admin/branches")}
-                className="flex items-center justify-center px-4 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                <span className="mr-2">🏢</span>
-                Manage Branches
-              </button>
-            </div>
+        {/* System Information */}
+        <div className="p-6 bg-white rounded-lg shadow-md">
+          <h2 className="mb-4 text-lg font-bold text-gray-900 md:text-xl">
+            System Information
+          </h2>
+          <div className="space-y-2 text-sm text-gray-600">
+            <p>
+              <strong>Role:</strong> Administrator
+            </p>
+            <p>
+              <strong>Access Level:</strong> Full System Access
+            </p>
           </div>
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 };
 
 export default AdminDashboardHome;
+

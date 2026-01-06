@@ -17,11 +17,13 @@ const {
   validatePatientId,
   validatePatientSearch,
 } = require("../validators/patient.validator");
+const { searchRateLimiter } = require("../middleware/rateLimiter");
 
 // Search patients (for autocomplete) - available to all authenticated users
 router.get(
   "/search",
   authMiddleware,
+  searchRateLimiter, // Apply rate limiting to search
   validatePatientSearch,
   validate,
   searchPatients
@@ -31,7 +33,7 @@ router.get(
 router.get(
   "/",
   authMiddleware,
-  checkRole("RECEPTION", "DENTIST", "XRAY"),
+  checkRole("ADMIN", "RECEPTION", "DENTIST", "XRAY"),
   // Temporarily removed validation to debug - will add back if needed
   // validatePatientSearch,
   // validate,
@@ -42,7 +44,7 @@ router.get(
 router.get(
   "/:id",
   authMiddleware,
-  checkRole("RECEPTION", "DENTIST", "XRAY"),
+  checkRole("ADMIN", "RECEPTION", "DENTIST", "XRAY"),
   validatePatientId,
   validate,
   getPatientById

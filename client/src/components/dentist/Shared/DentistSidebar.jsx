@@ -6,8 +6,7 @@ const DentistSidebar = ({ onClose }) => {
   const isActive = (path) => {
     if (path === "/dentist") {
       return (
-        location.pathname === "/dentist" ||
-        location.pathname === "/dentist/"
+        location.pathname === "/dentist" || location.pathname === "/dentist/"
       );
     }
     return location.pathname.startsWith(path);
@@ -36,18 +35,18 @@ const DentistSidebar = ({ onClose }) => {
       description: "Treatment form",
     },
     {
-      id: "patient-search",
-      label: "Patient Search",
-      icon: "🔍",
-      path: "/dentist/search",
-      description: "Search patient records",
-    },
-    {
       id: "xray-requests",
       label: "X-Ray Requests",
       icon: "🩻",
       path: "/dentist/xray-requests",
       description: "Manage X-Ray requests",
+    },
+    {
+      id: "billing-payment",
+      label: "Billing Payment",
+      icon: "💳",
+      path: "/dentist/billing-payment",
+      description: "Create billing for reception",
     },
   ];
 
@@ -121,4 +120,3 @@ const DentistSidebar = ({ onClose }) => {
 };
 
 export default DentistSidebar;
-

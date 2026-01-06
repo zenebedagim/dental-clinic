@@ -90,12 +90,19 @@ const normalizeClinicalExam = (clinicalExam) => {
     return null;
   }
 
-  // Normalize the structure - ensure nested objects exist
+  // Deep copy nested objects to preserve all fields including "Other" text fields
+  // This ensures all fields from frontend (including oralHygieneStatusOther, etc.) are preserved
   const normalized = {
-    // New structured format
-    generalAppearance: clinicalExam.generalAppearance || {},
-    extraOral: clinicalExam.extraOral || {},
-    intraOral: clinicalExam.intraOral || {},
+    // New structured format - deep copy to preserve all fields including "Other" fields
+    generalAppearance: clinicalExam.generalAppearance
+      ? JSON.parse(JSON.stringify(clinicalExam.generalAppearance))
+      : {},
+    extraOral: clinicalExam.extraOral
+      ? JSON.parse(JSON.stringify(clinicalExam.extraOral))
+      : {},
+    intraOral: clinicalExam.intraOral
+      ? JSON.parse(JSON.stringify(clinicalExam.intraOral))
+      : {},
     provisionalFindings: clinicalExam.provisionalFindings || null,
     // Legacy fields for backward compatibility
     extraoralFindings: clinicalExam.extraoralFindings || null,
@@ -104,11 +111,22 @@ const normalizeClinicalExam = (clinicalExam) => {
     occlusionFindings: clinicalExam.occlusionFindings || null,
   };
 
-  // Check if there's any actual data
+  // Check if there's any actual data (including "Other" fields)
+  // Check all nested object values recursively
+  const hasDataInObject = (obj) => {
+    if (!obj || typeof obj !== "object") return false;
+    return Object.values(obj).some((v) => {
+      if (v && typeof v === "object") {
+        return hasDataInObject(v);
+      }
+      return v !== null && v !== undefined && v !== "";
+    });
+  };
+
   const hasData =
-    Object.values(normalized.generalAppearance).some((v) => v) ||
-    Object.values(normalized.extraOral).some((v) => v) ||
-    Object.values(normalized.intraOral).some((v) => v) ||
+    hasDataInObject(normalized.generalAppearance) ||
+    hasDataInObject(normalized.extraOral) ||
+    hasDataInObject(normalized.intraOral) ||
     normalized.provisionalFindings ||
     normalized.extraoralFindings ||
     normalized.intraoralSoftTissue ||
@@ -136,6 +154,7 @@ const createOrUpdateTreatment = async (req, res) => {
       vitalSigns,
       clinicalExam,
       clinicalTests,
+      investigations,
       affectedTeeth,
       // SOAP - Assessment
       diagnosisCode,
@@ -187,10 +206,14 @@ const createOrUpdateTreatment = async (req, res) => {
       // SOAP - Objective
       vitalSigns: vitalSigns ? JSON.parse(JSON.stringify(vitalSigns)) : null,
       // Normalize and validate clinicalExam structure (Ethiopian Dental Format)
+      // Preserves all fields including "Other" text fields
       clinicalExam: normalizeClinicalExam(clinicalExam),
       clinicalTests: clinicalTests
         ? JSON.parse(JSON.stringify(clinicalTests))
         : null,
+      investigations: investigations
+        ? JSON.parse(JSON.stringify(investigations))
+        : null, // {types: [], other: ""}
       affectedTeeth: Array.isArray(affectedTeeth) ? affectedTeeth : [],
       // SOAP - Assessment
       diagnosisCode: diagnosisCode || null,
@@ -214,10 +237,9 @@ const createOrUpdateTreatment = async (req, res) => {
         : calculateTotalCostFromProcedures(procedureLogs),
     };
 
-    const treatment = await prisma.treatment.upsert({
-      where: { appointmentId },
-      update: treatmentData,
-      create: {
+    // Always create a new treatment record (allow multiple treatments per appointment)
+    const treatment = await prisma.treatment.create({
+      data: {
         appointmentId,
         ...treatmentData,
       },
@@ -236,43 +258,6 @@ const createOrUpdateTreatment = async (req, res) => {
         },
       },
     });
-
-    // Notify reception if treatment is completed or cost is updated
-    try {
-      const notificationService = require('../services/notification.service');
-      const { NotificationType } = require('../utils/notificationTypes');
-      
-      if (treatment.appointment.receptionistId) {
-        // Check if status is COMPLETED
-        if (treatment.status === 'COMPLETED') {
-          await notificationService.notifyUser(treatment.appointment.receptionistId, {
-            type: NotificationType.TREATMENT_COMPLETED,
-            title: 'Treatment Completed',
-            message: `Treatment completed for ${treatment.appointment.patientName || treatment.appointment.patient?.name || 'patient'}`,
-            data: {
-              treatmentId: treatment.id,
-              appointmentId: treatment.appointmentId,
-            },
-          });
-        }
-        
-        // Check if cost was provided and notify
-        if (totalCost) {
-          await notificationService.notifyUser(treatment.appointment.receptionistId, {
-            type: NotificationType.TREATMENT_COST_UPDATED,
-            title: 'Treatment Cost Updated',
-            message: `Treatment cost set to ${totalCost} for ${treatment.appointment.patientName || treatment.appointment.patient?.name || 'patient'}`,
-            data: {
-              treatmentId: treatment.id,
-              appointmentId: treatment.appointmentId,
-              totalCost: totalCost.toString(),
-            },
-          });
-        }
-      }
-    } catch (notifError) {
-      console.error('Error sending treatment notification:', notifError);
-    }
 
     return sendSuccess(res, treatment, 200, "Treatment saved successfully");
   } catch (error) {
@@ -324,26 +309,6 @@ const updateTreatmentStatus = async (req, res) => {
         },
       },
     });
-
-    // Notify reception if status changed to COMPLETED
-    if (status === 'COMPLETED' && updatedTreatment.appointment.receptionistId) {
-      try {
-        const notificationService = require('../services/notification.service');
-        const { NotificationType } = require('../utils/notificationTypes');
-        
-        await notificationService.notifyUser(updatedTreatment.appointment.receptionistId, {
-          type: NotificationType.TREATMENT_COMPLETED,
-          title: 'Treatment Completed',
-          message: `Treatment completed for ${updatedTreatment.appointment.patientName || updatedTreatment.appointment.patient?.name || 'patient'}`,
-          data: {
-            treatmentId: updatedTreatment.id,
-            appointmentId: updatedTreatment.appointmentId,
-          },
-        });
-      } catch (notifError) {
-        console.error('Error sending treatment completion notification:', notifError);
-      }
-    }
 
     return sendSuccess(
       res,

@@ -27,11 +27,51 @@ const XrayRequestForm = ({ onRequestCreated }) => {
     if (!selectedBranch?.id) return;
     try {
       setLoadingAppointments(true);
-      const response = await api.get("/appointments/dentist", {
-        params: { branchId: selectedBranch.id },
+      // Fetch appointments similar to PatientList's Search All Patients mode
+      // Get all appointments with treatments (any status: PENDING, IN_PROGRESS, or COMPLETED)
+      const params = {
+        branchId: selectedBranch.id,
+        limit: 500,
+      };
+      const response = await api.get("/appointments/dentist", { params });
+      const appointmentsData = response.data?.data || response.data || [];
+
+      // Filter appointments to only show those with any treatment
+      // Check for treatments array (new) or treatment object (backward compatibility)
+      const filteredAppointments = appointmentsData.filter((apt) => {
+        const hasTreatment =
+          (apt.treatments && apt.treatments.length > 0) || apt.treatment;
+        return hasTreatment;
       });
-      const data = response.data?.data || response.data || [];
-      setAppointments(data);
+
+      // Sort by most recent date (appointment date or treatment date) - newest first
+      const sortedAppointments = filteredAppointments.sort((a, b) => {
+        // Get the most recent treatment date if available, otherwise use appointment date
+        const getDate = (apt) => {
+          if (apt.treatments && apt.treatments.length > 0) {
+            // Get the most recent treatment's updatedAt or createdAt
+            const latestTreatment = apt.treatments[0]; // Already sorted by createdAt desc from server
+            return new Date(
+              latestTreatment.updatedAt || latestTreatment.createdAt || apt.date
+            );
+          }
+          if (apt.treatment) {
+            return new Date(
+              apt.treatment.updatedAt || apt.treatment.createdAt || apt.date
+            );
+          }
+          return new Date(apt.date);
+        };
+
+        const dateA = getDate(a);
+        const dateB = getDate(b);
+        return dateB - dateA; // Descending order (newest first)
+      });
+
+      // Limit to most recent 20-30 patients (using 25 as middle ground)
+      const limitedAppointments = sortedAppointments.slice(0, 25);
+
+      setAppointments(limitedAppointments);
     } catch (err) {
       console.error("Error fetching appointments:", err);
       showError("Failed to load appointments");
@@ -198,16 +238,33 @@ const XrayRequestForm = ({ onRequestCreated }) => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="">Select Patient/Appointment</option>
-                {appointments.map((appointment) => (
-                  <option key={appointment.id} value={appointment.id}>
-                    {appointment.patientName} - {formatDate(appointment.date)}
-                  </option>
-                ))}
+                {appointments.map((appointment) => {
+                  // Get treatment status from treatments array or treatment object
+                  const treatment =
+                    appointment.treatments && appointment.treatments.length > 0
+                      ? appointment.treatments[0]
+                      : appointment.treatment;
+                  const treatmentStatus = treatment?.status || "";
+
+                  return (
+                    <option key={appointment.id} value={appointment.id}>
+                      {appointment.patientName} - {formatDate(appointment.date)}
+                      {treatmentStatus && ` [${treatmentStatus}]`}
+                    </option>
+                  );
+                })}
               </select>
             )}
             {appointments.length === 0 && !loadingAppointments && (
               <p className="mt-1 text-xs text-gray-500">
-                No appointments found. Create an appointment first.
+                No appointments with treatments found. Patients will appear here
+                after treatment is started.
+              </p>
+            )}
+            {appointments.length > 0 && !loadingAppointments && (
+              <p className="mt-1 text-xs text-gray-500">
+                Showing {appointments.length} most recent patients with
+                treatments (sorted by most recent first).
               </p>
             )}
           </div>
@@ -263,9 +320,7 @@ const XrayRequestForm = ({ onRequestCreated }) => {
                         {type.abbreviation
                           ? `[${type.abbreviation}] ${type.name}`
                           : type.name}
-                        {type.description
-                          ? ` - ${type.description}`
-                          : ""}
+                        {type.description ? ` - ${type.description}` : ""}
                       </option>
                     ))}
                   </optgroup>
@@ -347,6 +402,7 @@ const XrayRequestForm = ({ onRequestCreated }) => {
             >
               {loading ? "Creating..." : "Create Request"}
             </button>
+            
           </div>
         </form>
       </Modal>

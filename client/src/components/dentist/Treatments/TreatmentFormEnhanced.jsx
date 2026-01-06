@@ -1,9 +1,12 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import api from "../../../services/api";
 import { TREATMENT_STATUS } from "../../../utils/constants";
+import {
+  getInitialTreatmentFormData,
+  mapTreatmentToFormData,
+  prepareTreatmentSubmitData,
+} from "../../../utils/treatmentFormUtils";
 import { useToast } from "../../../hooks/useToast";
-import { XRAY_TYPES, XRAY_CATEGORIES } from "../../../utils/dentalConstants";
 import ToothChart from "./ToothChart";
 import DiagnosisSelector from "./DiagnosisSelector";
 import ProcedureLogger from "./ProcedureLogger";
@@ -11,507 +14,34 @@ import VitalSignsForm from "../Vitals/VitalSignsForm";
 
 const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
   const { success: showSuccess, error: showError } = useToast();
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [showNavigationModal, setShowNavigationModal] = useState(false);
 
   // SOAP Form Data
-  const [formData, setFormData] = useState({
-    // Subjective
-    chiefComplaint: "",
-    historyPresentIllness: "",
-    medicalHistory: "",
-    dentalHistory: "",
-    socialHistory: "",
-
-    // Objective - Vital Signs
-    vitalSigns: null,
-
-    // Objective - Physical Examination (Ethiopian Format)
-    // General Appearance
-    generalAppearance: {
-      levelOfConsciousness: "",
-      levelOfConsciousnessOther: "",
-      bodyBuildPosture: "",
-      bodyBuildPostureOther: "",
-      signsOfPainDistress: "",
-      signsOfPainDistressOther: "",
-      nutritionalStatus: "",
-      nutritionalStatusOther: "",
-      pallorJaundiceCyanosis: "",
-      pallorJaundiceCyanosisOther: "",
-      facialSymmetry: "",
-      facialSymmetryOther: "",
-      swellingDeformity: "",
-      swellingDeformityOther: "",
-    },
-
-    // Extra-Oral Examination
-    extraOral: {
-      faceSymmetry: "",
-      faceSymmetryOther: "",
-      faceSwelling: "",
-      faceSwellingOther: "",
-      faceSinusTract: "",
-      faceSinusTractOther: "",
-      faceScars: "",
-      faceScarsOther: "",
-      eyesPallor: "",
-      eyesPallorOther: "",
-      eyesJaundice: "",
-      eyesJaundiceOther: "",
-      lipsColor: "",
-      lipsColorOther: "",
-      lipsCracks: "",
-      lipsCracksOther: "",
-      lipsUlcers: "",
-      lipsUlcersOther: "",
-      tmjPain: "",
-      tmjPainOther: "",
-      tmjClicking: "",
-      tmjClickingOther: "",
-      tmjLimitation: "",
-      tmjLimitationOther: "",
-      lymphNodesSubmental: "",
-      lymphNodesSubmentalOther: "",
-      lymphNodesSubmandibular: "",
-      lymphNodesSubmandibularOther: "",
-      lymphNodesCervical: "",
-      lymphNodesCervicalOther: "",
-    },
-
-    // Intra-Oral Examination
-    intraOral: {
-      oralHygieneStatus: "",
-      oralHygieneStatusOther: "",
-      softTissueBuccalMucosa: "",
-      softTissueBuccalMucosaOther: "",
-      softTissueLabialMucosa: "",
-      softTissueLabialMucosaOther: "",
-      gingivaColor: "",
-      gingivaColorOther: "",
-      gingivaConsistency: "",
-      gingivaConsistencyOther: "",
-      gingivaBleeding: "",
-      gingivaBleedingOther: "",
-      gingivaSwelling: "",
-      gingivaSwellingOther: "",
-      palateHard: "",
-      palateHardOther: "",
-      palateSoft: "",
-      palateSoftOther: "",
-      floorOfMouthSwelling: "",
-      floorOfMouthSwellingOther: "",
-      floorOfMouthTenderness: "",
-      floorOfMouthTendernessOther: "",
-      floorOfMouthLesions: "",
-      floorOfMouthLesionsOther: "",
-      tongueSizeShape: "",
-      tongueSizeShapeOther: "",
-      tongueColor: "",
-      tongueColorOther: "",
-      tongueCoating: "",
-      tongueCoatingOther: "",
-      tongueMovement: "",
-      tongueMovementOther: "",
-      tongueLesions: "",
-      tongueLesionsOther: "",
-      dentalNumberPresent: "",
-      dentalNumberMissing: "",
-      dentalCaries: "",
-      dentalCariesOther: "",
-      dentalFilled: "",
-      dentalFilledOther: "",
-      dentalFractured: "",
-      dentalFracturedOther: "",
-      dentalMobility: "",
-      dentalMobilityOther: "",
-      dentalMalocclusion: "",
-      dentalMalocclusionOther: "",
-      dentalAttritionAbrasionErosion: "",
-      dentalAttritionAbrasionErosionOther: "",
-      periodontalPocketDepth: "",
-      periodontalPocketDepthOther: "",
-      periodontalRecession: "",
-      periodontalRecessionOther: "",
-    },
-
-    // Clinical Tests
-    clinicalTests: {
-      pulpVitality: "",
-      percussion: "",
-      thermalSensitivity: "",
-      mobility: "",
-    },
-
-    // Provisional Findings/Impression
-    provisionalFindings: "",
-
-    // Legacy fields for backward compatibility during transition
-    extraoralFindings: "",
-    intraoralSoftTissue: "",
-    periodontalStatus: "",
-    occlusionFindings: "",
-    affectedTeeth: [],
-    toothConditions: {}, // Map of tooth number to condition
-
-    // Investigations / X-Ray
-    investigations: [],
-    investigationOther: "",
-
-    // Assessment
-    primaryDiagnosis: null,
-    secondaryDiagnoses: [],
-    diagnosisNotes: "",
-    diagnosisCode: "",
-
-    // Plan
-    treatmentPlan: "",
-    procedureLogs: [],
-    postTreatment: {
-      painLevel: "",
-      complications: "",
-      instructions: "",
-      medications: "",
-      followUpDate: "",
-    },
-    notes: "",
-
-    // Status
-    status: "PENDING",
-
-    // Dentist Signature
-    dentistSignature: "",
-  });
+  const [formData, setFormData] = useState(getInitialTreatmentFormData());
 
   useEffect(() => {
     if (appointment?.treatment) {
-      const treatment = appointment.treatment;
-      const clinicalExam = treatment.clinicalExam || {};
-
-      // Map existing clinicalExam JSON to new structured fields
-      // If new structured format exists, use it; otherwise map from legacy format
-      const generalAppearance = clinicalExam.generalAppearance || {};
-      const generalAppearanceWithDefaults = {
-        levelOfConsciousness: generalAppearance.levelOfConsciousness || "",
-        levelOfConsciousnessOther:
-          generalAppearance.levelOfConsciousnessOther || "",
-        bodyBuildPosture: generalAppearance.bodyBuildPosture || "",
-        bodyBuildPostureOther: generalAppearance.bodyBuildPostureOther || "",
-        signsOfPainDistress: generalAppearance.signsOfPainDistress || "",
-        signsOfPainDistressOther:
-          generalAppearance.signsOfPainDistressOther || "",
-        nutritionalStatus: generalAppearance.nutritionalStatus || "",
-        nutritionalStatusOther: generalAppearance.nutritionalStatusOther || "",
-        pallorJaundiceCyanosis: generalAppearance.pallorJaundiceCyanosis || "",
-        pallorJaundiceCyanosisOther:
-          generalAppearance.pallorJaundiceCyanosisOther || "",
-        facialSymmetry: generalAppearance.facialSymmetry || "",
-        facialSymmetryOther: generalAppearance.facialSymmetryOther || "",
-        swellingDeformity: generalAppearance.swellingDeformity || "",
-        swellingDeformityOther: generalAppearance.swellingDeformityOther || "",
-      };
-
-      const extraOral = clinicalExam.extraOral || {};
-      const extraOralWithDefaults = {
-        faceSymmetry: extraOral.faceSymmetry || "",
-        faceSymmetryOther: extraOral.faceSymmetryOther || "",
-        faceSwelling: extraOral.faceSwelling || "",
-        faceSwellingOther: extraOral.faceSwellingOther || "",
-        faceSinusTract: extraOral.faceSinusTract || "",
-        faceSinusTractOther: extraOral.faceSinusTractOther || "",
-        faceScars: extraOral.faceScars || "",
-        faceScarsOther: extraOral.faceScarsOther || "",
-        eyesPallor: extraOral.eyesPallor || "",
-        eyesPallorOther: extraOral.eyesPallorOther || "",
-        eyesJaundice: extraOral.eyesJaundice || "",
-        eyesJaundiceOther: extraOral.eyesJaundiceOther || "",
-        lipsColor: extraOral.lipsColor || "",
-        lipsColorOther: extraOral.lipsColorOther || "",
-        lipsCracks: extraOral.lipsCracks || "",
-        lipsCracksOther: extraOral.lipsCracksOther || "",
-        lipsUlcers: extraOral.lipsUlcers || "",
-        lipsUlcersOther: extraOral.lipsUlcersOther || "",
-        tmjPain: extraOral.tmjPain || "",
-        tmjPainOther: extraOral.tmjPainOther || "",
-        tmjClicking: extraOral.tmjClicking || "",
-        tmjClickingOther: extraOral.tmjClickingOther || "",
-        tmjLimitation: extraOral.tmjLimitation || "",
-        tmjLimitationOther: extraOral.tmjLimitationOther || "",
-        lymphNodesSubmental: extraOral.lymphNodesSubmental || "",
-        lymphNodesSubmentalOther: extraOral.lymphNodesSubmentalOther || "",
-        lymphNodesSubmandibular: extraOral.lymphNodesSubmandibular || "",
-        lymphNodesSubmandibularOther:
-          extraOral.lymphNodesSubmandibularOther || "",
-        lymphNodesCervical: extraOral.lymphNodesCervical || "",
-        lymphNodesCervicalOther: extraOral.lymphNodesCervicalOther || "",
-      };
-
-      const intraOral = clinicalExam.intraOral || {};
-      const intraOralWithDefaults = {
-        oralHygieneStatus: intraOral.oralHygieneStatus || "",
-        oralHygieneStatusOther: intraOral.oralHygieneStatusOther || "",
-        softTissueBuccalMucosa: intraOral.softTissueBuccalMucosa || "",
-        softTissueBuccalMucosaOther:
-          intraOral.softTissueBuccalMucosaOther || "",
-        softTissueLabialMucosa: intraOral.softTissueLabialMucosa || "",
-        softTissueLabialMucosaOther:
-          intraOral.softTissueLabialMucosaOther || "",
-        gingivaColor: intraOral.gingivaColor || "",
-        gingivaColorOther: intraOral.gingivaColorOther || "",
-        gingivaConsistency: intraOral.gingivaConsistency || "",
-        gingivaConsistencyOther: intraOral.gingivaConsistencyOther || "",
-        gingivaBleeding: intraOral.gingivaBleeding || "",
-        gingivaBleedingOther: intraOral.gingivaBleedingOther || "",
-        gingivaSwelling: intraOral.gingivaSwelling || "",
-        gingivaSwellingOther: intraOral.gingivaSwellingOther || "",
-        palateHard: intraOral.palateHard || "",
-        palateHardOther: intraOral.palateHardOther || "",
-        palateSoft: intraOral.palateSoft || "",
-        palateSoftOther: intraOral.palateSoftOther || "",
-        floorOfMouthSwelling: intraOral.floorOfMouthSwelling || "",
-        floorOfMouthSwellingOther: intraOral.floorOfMouthSwellingOther || "",
-        floorOfMouthTenderness: intraOral.floorOfMouthTenderness || "",
-        floorOfMouthTendernessOther:
-          intraOral.floorOfMouthTendernessOther || "",
-        floorOfMouthLesions: intraOral.floorOfMouthLesions || "",
-        floorOfMouthLesionsOther: intraOral.floorOfMouthLesionsOther || "",
-        tongueSizeShape: intraOral.tongueSizeShape || "",
-        tongueSizeShapeOther: intraOral.tongueSizeShapeOther || "",
-        tongueColor: intraOral.tongueColor || "",
-        tongueColorOther: intraOral.tongueColorOther || "",
-        tongueCoating: intraOral.tongueCoating || "",
-        tongueCoatingOther: intraOral.tongueCoatingOther || "",
-        tongueMovement: intraOral.tongueMovement || "",
-        tongueMovementOther: intraOral.tongueMovementOther || "",
-        tongueLesions: intraOral.tongueLesions || "",
-        tongueLesionsOther: intraOral.tongueLesionsOther || "",
-        dentalNumberPresent: intraOral.dentalNumberPresent || "",
-        dentalNumberMissing: intraOral.dentalNumberMissing || "",
-        dentalCaries: intraOral.dentalCaries || "",
-        dentalCariesOther: intraOral.dentalCariesOther || "",
-        dentalFilled: intraOral.dentalFilled || "",
-        dentalFilledOther: intraOral.dentalFilledOther || "",
-        dentalFractured: intraOral.dentalFractured || "",
-        dentalFracturedOther: intraOral.dentalFracturedOther || "",
-        dentalMobility: intraOral.dentalMobility || "",
-        dentalMobilityOther: intraOral.dentalMobilityOther || "",
-        dentalMalocclusion: intraOral.dentalMalocclusion || "",
-        dentalMalocclusionOther: intraOral.dentalMalocclusionOther || "",
-        dentalAttritionAbrasionErosion:
-          intraOral.dentalAttritionAbrasionErosion || "",
-        dentalAttritionAbrasionErosionOther:
-          intraOral.dentalAttritionAbrasionErosionOther || "",
-        periodontalPocketDepth: intraOral.periodontalPocketDepth || "",
-        periodontalPocketDepthOther:
-          intraOral.periodontalPocketDepthOther || "",
-        periodontalRecession: intraOral.periodontalRecession || "",
-        periodontalRecessionOther: intraOral.periodontalRecessionOther || "",
-      };
-
-      setFormData({
-        chiefComplaint: treatment.chiefComplaint || "",
-        historyPresentIllness: treatment.historyPresentIllness || "",
-        medicalHistory: treatment.medicalHistory || "",
-        dentalHistory: treatment.dentalHistory || "",
-        socialHistory: treatment.socialHistory || "",
-        vitalSigns: treatment.vitalSigns || null,
-        generalAppearance: generalAppearanceWithDefaults,
-        extraOral: extraOralWithDefaults,
-        intraOral: intraOralWithDefaults,
-        clinicalTests: treatment.clinicalTests || {
-          pulpVitality: "",
-          percussion: "",
-          thermalSensitivity: "",
-          mobility: "",
-        },
-        provisionalFindings: clinicalExam.provisionalFindings || "",
-        // Legacy fields for backward compatibility
-        extraoralFindings: clinicalExam.extraoralFindings || "",
-        intraoralSoftTissue: clinicalExam.intraoralSoftTissue || "",
-        periodontalStatus: clinicalExam.periodontalStatus || "",
-        occlusionFindings: clinicalExam.occlusionFindings || "",
-        affectedTeeth: treatment.affectedTeeth || [],
-        toothConditions: {},
-        investigations:
-          treatment.investigations?.types || treatment.investigations || [],
-        investigationOther:
-          treatment.investigations?.other || treatment.investigationOther || "",
-        primaryDiagnosis: treatment.diagnosisCode
-          ? { code: treatment.diagnosisCode, name: treatment.diagnosis || "" }
-          : null,
-        secondaryDiagnoses:
-          treatment.secondaryDiagnoses?.map((code) => ({
-            code,
-            name: "",
-          })) || [],
-        diagnosisNotes: treatment.diagnosisNotes || "",
-        diagnosisCode: treatment.diagnosisCode || "",
-        treatmentPlan: treatment.treatmentPlan || "",
-        procedureLogs: treatment.procedureLogs || [],
-        postTreatment: treatment.postTreatment || {
-          painLevel: "",
-          complications: "",
-          instructions: "",
-          medications: "",
-          followUpDate: "",
-        },
-        notes: treatment.notes || "",
-        status: treatment.status || "PENDING",
-        dentistSignature: treatment.dentistSignature || "",
-      });
+      setFormData(mapTreatmentToFormData(appointment.treatment));
     } else {
       // Reset form
-      setFormData({
-        chiefComplaint: "",
-        historyPresentIllness: "",
-        medicalHistory: "",
-        dentalHistory: "",
-        socialHistory: "",
-        vitalSigns: null,
-        generalAppearance: {
-          levelOfConsciousness: "",
-          levelOfConsciousnessOther: "",
-          bodyBuildPosture: "",
-          bodyBuildPostureOther: "",
-          signsOfPainDistress: "",
-          signsOfPainDistressOther: "",
-          nutritionalStatus: "",
-          nutritionalStatusOther: "",
-          pallorJaundiceCyanosis: "",
-          pallorJaundiceCyanosisOther: "",
-          facialSymmetry: "",
-          facialSymmetryOther: "",
-          swellingDeformity: "",
-          swellingDeformityOther: "",
-        },
-        extraOral: {
-          faceSymmetry: "",
-          faceSymmetryOther: "",
-          faceSwelling: "",
-          faceSwellingOther: "",
-          faceSinusTract: "",
-          faceSinusTractOther: "",
-          faceScars: "",
-          faceScarsOther: "",
-          eyesPallor: "",
-          eyesPallorOther: "",
-          eyesJaundice: "",
-          eyesJaundiceOther: "",
-          lipsColor: "",
-          lipsColorOther: "",
-          lipsCracks: "",
-          lipsCracksOther: "",
-          lipsUlcers: "",
-          lipsUlcersOther: "",
-          tmjPain: "",
-          tmjPainOther: "",
-          tmjClicking: "",
-          tmjClickingOther: "",
-          tmjLimitation: "",
-          tmjLimitationOther: "",
-          lymphNodesSubmental: "",
-          lymphNodesSubmentalOther: "",
-          lymphNodesSubmandibular: "",
-          lymphNodesSubmandibularOther: "",
-          lymphNodesCervical: "",
-          lymphNodesCervicalOther: "",
-        },
-        intraOral: {
-          oralHygieneStatus: "",
-          oralHygieneStatusOther: "",
-          softTissueBuccalMucosa: "",
-          softTissueBuccalMucosaOther: "",
-          softTissueLabialMucosa: "",
-          softTissueLabialMucosaOther: "",
-          gingivaColor: "",
-          gingivaColorOther: "",
-          gingivaConsistency: "",
-          gingivaConsistencyOther: "",
-          gingivaBleeding: "",
-          gingivaBleedingOther: "",
-          gingivaSwelling: "",
-          gingivaSwellingOther: "",
-          palateHard: "",
-          palateHardOther: "",
-          palateSoft: "",
-          palateSoftOther: "",
-          floorOfMouthSwelling: "",
-          floorOfMouthSwellingOther: "",
-          floorOfMouthTenderness: "",
-          floorOfMouthTendernessOther: "",
-          floorOfMouthLesions: "",
-          floorOfMouthLesionsOther: "",
-          tongueSizeShape: "",
-          tongueSizeShapeOther: "",
-          tongueColor: "",
-          tongueColorOther: "",
-          tongueCoating: "",
-          tongueCoatingOther: "",
-          tongueMovement: "",
-          tongueMovementOther: "",
-          tongueLesions: "",
-          tongueLesionsOther: "",
-          dentalNumberPresent: "",
-          dentalNumberMissing: "",
-          dentalCaries: "",
-          dentalCariesOther: "",
-          dentalFilled: "",
-          dentalFilledOther: "",
-          dentalFractured: "",
-          dentalFracturedOther: "",
-          dentalMobility: "",
-          dentalMobilityOther: "",
-          dentalMalocclusion: "",
-          dentalMalocclusionOther: "",
-          dentalAttritionAbrasionErosion: "",
-          dentalAttritionAbrasionErosionOther: "",
-          periodontalPocketDepth: "",
-          periodontalPocketDepthOther: "",
-          periodontalRecession: "",
-          periodontalRecessionOther: "",
-        },
-        clinicalTests: {
-          pulpVitality: "",
-          percussion: "",
-          thermalSensitivity: "",
-          mobility: "",
-        },
-        provisionalFindings: "",
-        // Legacy fields
-        extraoralFindings: "",
-        intraoralSoftTissue: "",
-        periodontalStatus: "",
-        occlusionFindings: "",
-        affectedTeeth: [],
-        toothConditions: {},
-        investigations: [],
-        investigationOther: "",
-        primaryDiagnosis: null,
-        secondaryDiagnoses: [],
-        diagnosisNotes: "",
-        diagnosisCode: "",
-        treatmentPlan: "",
-        procedureLogs: [],
-        postTreatment: {
-          painLevel: "",
-          complications: "",
-          instructions: "",
-          medications: "",
-          followUpDate: "",
-        },
-        notes: "",
-        status: "PENDING",
-        dentistSignature: "",
-      });
+      setFormData(getInitialTreatmentFormData());
     }
   }, [appointment]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!appointment || isFormDisabled) return;
+    if (!appointment) return;
+
+    // Validate appointment has an ID
+    if (!appointment.id) {
+      const errorMsg =
+        "Appointment ID is missing. Please select an appointment first.";
+      setError(errorMsg);
+      showError(errorMsg);
+      return;
+    }
 
     // No required validations - allow partial saves
     // Dentists can save progress and update later
@@ -521,68 +51,7 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
     setLoading(true);
 
     try {
-      // Prepare data for API - map new structured fields to clinicalExam JSON
-      const clinicalExam = {
-        // New structured format
-        generalAppearance: formData.generalAppearance,
-        extraOral: formData.extraOral,
-        intraOral: formData.intraOral,
-        provisionalFindings: formData.provisionalFindings || null,
-        // Legacy fields for backward compatibility
-        extraoralFindings: formData.extraoralFindings || null,
-        intraoralSoftTissue: formData.intraoralSoftTissue || null,
-        periodontalStatus: formData.periodontalStatus || null,
-        occlusionFindings: formData.occlusionFindings || null,
-      };
-
-      // Check if any field has data
-      const hasData =
-        Object.values(formData.generalAppearance).some((v) => v) ||
-        Object.values(formData.extraOral).some((v) => v) ||
-        Object.values(formData.intraOral).some((v) => v) ||
-        formData.provisionalFindings ||
-        Object.values(clinicalExam)
-          .slice(4)
-          .some((v) => v);
-
-      const submitData = {
-        appointmentId: appointment.id,
-        // Legacy fields for backward compatibility
-        diagnosis: formData.primaryDiagnosis?.name || null,
-        treatmentPlan: formData.treatmentPlan || null,
-        status: formData.status || "PENDING",
-        // New SOAP fields
-        chiefComplaint: formData.chiefComplaint || null,
-        historyPresentIllness: formData.historyPresentIllness || null,
-        medicalHistory: formData.medicalHistory || null,
-        dentalHistory: formData.dentalHistory || null,
-        socialHistory: formData.socialHistory || null,
-        vitalSigns: formData.vitalSigns || null,
-        clinicalExam: hasData ? clinicalExam : null,
-        clinicalTests: Object.values(formData.clinicalTests).some((v) => v)
-          ? formData.clinicalTests
-          : null,
-        diagnosisCode: formData.primaryDiagnosis?.code || null,
-        secondaryDiagnoses:
-          formData.secondaryDiagnoses?.map((d) => d.code) || [],
-        diagnosisNotes: formData.diagnosisNotes || null,
-        investigations:
-          formData.investigations.length > 0 ||
-          formData.investigationOther.trim()
-            ? {
-                types: formData.investigations,
-                other: formData.investigationOther.trim() || null,
-              }
-            : null,
-        affectedTeeth: formData.affectedTeeth,
-        procedureLogs:
-          formData.procedureLogs.length > 0 ? formData.procedureLogs : null,
-        postTreatment: Object.values(formData.postTreatment).some((v) => v)
-          ? formData.postTreatment
-          : null,
-        notes: formData.notes,
-        dentistSignature: formData.dentistSignature || null,
-      };
+      const submitData = prepareTreatmentSubmitData(formData, appointment.id);
 
       await api.post("/treatments", submitData);
       setSuccess(
@@ -594,24 +63,32 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
       if (onTreatmentSaved) {
         onTreatmentSaved();
       }
-
-      // Show navigation options if treatment is completed
-      if (formData.status === TREATMENT_STATUS.COMPLETED) {
-        setShowNavigationModal(true);
-      }
     } catch (err) {
-      const errorMsg =
-        err.response?.data?.message || "Failed to save treatment";
+      // Extract detailed error message from response
+      let errorMsg = "Failed to save treatment";
+
+      if (err.response?.data) {
+        // Check for validation errors
+        if (
+          err.response.data.errors &&
+          Array.isArray(err.response.data.errors)
+        ) {
+          const validationErrors = err.response.data.errors
+            .map((e) => `${e.field}: ${e.message}`)
+            .join(", ");
+          errorMsg = `Validation failed: ${validationErrors}`;
+        } else if (err.response.data.message) {
+          errorMsg = err.response.data.message;
+        }
+      }
+
+      console.error("Treatment save error:", err.response?.data || err);
       setError(errorMsg);
       showError(errorMsg);
     } finally {
       setLoading(false);
     }
   };
-
-  // Show form structure even when no appointment is selected
-  // so users can see the workflow, but disable submission
-  const isFormDisabled = !appointment;
 
   return (
     <div className="p-6 space-y-6 bg-white rounded-lg shadow-md">
@@ -621,11 +98,6 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
             ? `Treatment for ${appointment.patientName}`
             : "Treatment Form (SOAP Workflow)"}
         </h2>
-        {isFormDisabled && (
-          <span className="px-3 py-1 text-sm text-yellow-800 bg-yellow-100 rounded-full">
-            Select a patient to enable
-          </span>
-        )}
       </div>
 
       {error && (
@@ -1836,6 +1308,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                     intraOral: {
                       ...formData.intraOral,
                       oralHygieneStatus: e.target.value,
+                      oralHygieneStatusOther:
+                        e.target.value !== "Other"
+                          ? ""
+                          : formData.intraOral.oralHygieneStatusOther,
                     },
                   })
                 }
@@ -1845,7 +1321,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                 <option value="Good">Good</option>
                 <option value="Fair">Fair</option>
                 <option value="Poor">Poor</option>
+                <option value="Other">Other</option>
               </select>
+              {formData.intraOral.oralHygieneStatus === "Other" && (
+                <input
+                  type="text"
+                  value={formData.intraOral.oralHygieneStatusOther}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      intraOral: {
+                        ...formData.intraOral,
+                        oralHygieneStatusOther: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="Please specify..."
+                  className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              )}
               <p className="mt-1 text-xs text-gray-500">
                 Assessed by plaque, calculus, and debris
               </p>
@@ -1870,6 +1364,11 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             softTissueBuccalMucosa: e.target.value,
+                            softTissueBuccalMucosaOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral
+                                    .softTissueBuccalMucosaOther,
                           },
                         })
                       }
@@ -1878,7 +1377,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="">Select...</option>
                       <option value="Normal">Normal</option>
                       <option value="Abnormal">Abnormal</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.softTissueBuccalMucosa === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.softTissueBuccalMucosaOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              softTissueBuccalMucosaOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -1893,6 +1410,11 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             softTissueLabialMucosa: e.target.value,
+                            softTissueLabialMucosaOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral
+                                    .softTissueLabialMucosaOther,
                           },
                         })
                       }
@@ -1901,7 +1423,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="">Select...</option>
                       <option value="Normal">Normal</option>
                       <option value="Abnormal">Abnormal</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.softTissueLabialMucosa === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.softTissueLabialMucosaOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              softTissueLabialMucosaOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -1923,6 +1463,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               gingivaColor: e.target.value,
+                              gingivaColorOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral.gingivaColorOther,
                             },
                           })
                         }
@@ -1933,7 +1477,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         <option value="Pale">Pale</option>
                         <option value="Erythematous">Erythematous</option>
                         <option value="Cyanotic">Cyanotic</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.gingivaColor === "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.gingivaColorOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                gingivaColorOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
 
                     <div>
@@ -1948,6 +1510,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               gingivaConsistency: e.target.value,
+                              gingivaConsistencyOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral.gingivaConsistencyOther,
                             },
                           })
                         }
@@ -1957,7 +1523,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         <option value="Firm">Firm</option>
                         <option value="Soft">Soft</option>
                         <option value="Spongy">Spongy</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.gingivaConsistency === "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.gingivaConsistencyOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                gingivaConsistencyOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
 
                     <div>
@@ -1972,6 +1556,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               gingivaBleeding: e.target.value,
+                              gingivaBleedingOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral.gingivaBleedingOther,
                             },
                           })
                         }
@@ -1981,7 +1569,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         <option value="None">None</option>
                         <option value="On Probing">On Probing</option>
                         <option value="Spontaneous">Spontaneous</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.gingivaBleeding === "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.gingivaBleedingOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                gingivaBleedingOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
 
                     <div>
@@ -1996,6 +1602,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               gingivaSwelling: e.target.value,
+                              gingivaSwellingOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral.gingivaSwellingOther,
                             },
                           })
                         }
@@ -2004,7 +1614,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         <option value="">Select...</option>
                         <option value="None">None</option>
                         <option value="Present">Present</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.gingivaSwelling === "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.gingivaSwellingOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                gingivaSwellingOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2023,6 +1651,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             palateHard: e.target.value,
+                            palateHardOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral.palateHardOther,
                           },
                         })
                       }
@@ -2031,7 +1663,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="">Select...</option>
                       <option value="Normal">Normal</option>
                       <option value="Abnormal">Abnormal</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.palateHard === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.palateHardOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              palateHardOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -2046,6 +1696,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             palateSoft: e.target.value,
+                            palateSoftOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral.palateSoftOther,
                           },
                         })
                       }
@@ -2054,7 +1708,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="">Select...</option>
                       <option value="Normal">Normal</option>
                       <option value="Abnormal">Abnormal</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.palateSoft === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.palateSoftOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              palateSoftOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -2076,6 +1748,11 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               floorOfMouthSwelling: e.target.value,
+                              floorOfMouthSwellingOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral
+                                      .floorOfMouthSwellingOther,
                             },
                           })
                         }
@@ -2084,7 +1761,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         <option value="">Select...</option>
                         <option value="None">None</option>
                         <option value="Present">Present</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.floorOfMouthSwelling === "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.floorOfMouthSwellingOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                floorOfMouthSwellingOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
 
                     <div>
@@ -2099,6 +1794,11 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               floorOfMouthTenderness: e.target.value,
+                              floorOfMouthTendernessOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral
+                                      .floorOfMouthTendernessOther,
                             },
                           })
                         }
@@ -2107,7 +1807,26 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         <option value="">Select...</option>
                         <option value="None">None</option>
                         <option value="Present">Present</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.floorOfMouthTenderness ===
+                        "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.floorOfMouthTendernessOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                floorOfMouthTendernessOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
 
                     <div>
@@ -2122,6 +1841,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               floorOfMouthLesions: e.target.value,
+                              floorOfMouthLesionsOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral.floorOfMouthLesionsOther,
                             },
                           })
                         }
@@ -2130,7 +1853,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         <option value="">Select...</option>
                         <option value="None">None</option>
                         <option value="Present">Present</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.floorOfMouthLesions === "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.floorOfMouthLesionsOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                floorOfMouthLesionsOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2155,6 +1896,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         intraOral: {
                           ...formData.intraOral,
                           tongueSizeShape: e.target.value,
+                          tongueSizeShapeOther:
+                            e.target.value !== "Other"
+                              ? ""
+                              : formData.intraOral.tongueSizeShapeOther,
                         },
                       })
                     }
@@ -2164,7 +1909,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                     <option value="Normal">Normal</option>
                     <option value="Enlarged">Enlarged</option>
                     <option value="Abnormal Shape">Abnormal Shape</option>
+                    <option value="Other">Other</option>
                   </select>
+                  {formData.intraOral.tongueSizeShape === "Other" && (
+                    <input
+                      type="text"
+                      value={formData.intraOral.tongueSizeShapeOther}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          intraOral: {
+                            ...formData.intraOral,
+                            tongueSizeShapeOther: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="Please specify..."
+                      className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -2179,6 +1942,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         intraOral: {
                           ...formData.intraOral,
                           tongueColor: e.target.value,
+                          tongueColorOther:
+                            e.target.value !== "Other"
+                              ? ""
+                              : formData.intraOral.tongueColorOther,
                         },
                       })
                     }
@@ -2189,7 +1956,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                     <option value="Pale">Pale</option>
                     <option value="Erythematous">Erythematous</option>
                     <option value="Coated">Coated</option>
+                    <option value="Other">Other</option>
                   </select>
+                  {formData.intraOral.tongueColor === "Other" && (
+                    <input
+                      type="text"
+                      value={formData.intraOral.tongueColorOther}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          intraOral: {
+                            ...formData.intraOral,
+                            tongueColorOther: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="Please specify..."
+                      className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -2204,6 +1989,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         intraOral: {
                           ...formData.intraOral,
                           tongueCoating: e.target.value,
+                          tongueCoatingOther:
+                            e.target.value !== "Other"
+                              ? ""
+                              : formData.intraOral.tongueCoatingOther,
                         },
                       })
                     }
@@ -2212,7 +2001,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                     <option value="">Select...</option>
                     <option value="None">None</option>
                     <option value="Present">Present</option>
+                    <option value="Other">Other</option>
                   </select>
+                  {formData.intraOral.tongueCoating === "Other" && (
+                    <input
+                      type="text"
+                      value={formData.intraOral.tongueCoatingOther}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          intraOral: {
+                            ...formData.intraOral,
+                            tongueCoatingOther: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="Please specify..."
+                      className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -2227,6 +2034,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         intraOral: {
                           ...formData.intraOral,
                           tongueMovement: e.target.value,
+                          tongueMovementOther:
+                            e.target.value !== "Other"
+                              ? ""
+                              : formData.intraOral.tongueMovementOther,
                         },
                       })
                     }
@@ -2235,7 +2046,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                     <option value="">Select...</option>
                     <option value="Normal">Normal</option>
                     <option value="Limited">Limited</option>
+                    <option value="Other">Other</option>
                   </select>
+                  {formData.intraOral.tongueMovement === "Other" && (
+                    <input
+                      type="text"
+                      value={formData.intraOral.tongueMovementOther}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          intraOral: {
+                            ...formData.intraOral,
+                            tongueMovementOther: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="Please specify..."
+                      className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -2250,6 +2079,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         intraOral: {
                           ...formData.intraOral,
                           tongueLesions: e.target.value,
+                          tongueLesionsOther:
+                            e.target.value !== "Other"
+                              ? ""
+                              : formData.intraOral.tongueLesionsOther,
                         },
                       })
                     }
@@ -2258,7 +2091,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                     <option value="">Select...</option>
                     <option value="None">None</option>
                     <option value="Present">Present</option>
+                    <option value="Other">Other</option>
                   </select>
+                  {formData.intraOral.tongueLesions === "Other" && (
+                    <input
+                      type="text"
+                      value={formData.intraOral.tongueLesionsOther}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          intraOral: {
+                            ...formData.intraOral,
+                            tongueLesionsOther: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="Please specify..."
+                      className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  )}
                 </div>
               </div>
             </div>
@@ -2330,6 +2181,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             dentalCaries: e.target.value,
+                            dentalCariesOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral.dentalCariesOther,
                           },
                         })
                       }
@@ -2339,7 +2194,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="None">None</option>
                       <option value="Localized">Localized</option>
                       <option value="Generalized">Generalized</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.dentalCaries === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.dentalCariesOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              dentalCariesOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -2354,6 +2227,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             dentalFilled: e.target.value,
+                            dentalFilledOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral.dentalFilledOther,
                           },
                         })
                       }
@@ -2362,7 +2239,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="">Select...</option>
                       <option value="None">None</option>
                       <option value="Present">Present</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.dentalFilled === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.dentalFilledOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              dentalFilledOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -2377,6 +2272,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             dentalFractured: e.target.value,
+                            dentalFracturedOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral.dentalFracturedOther,
                           },
                         })
                       }
@@ -2385,7 +2284,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="">Select...</option>
                       <option value="None">None</option>
                       <option value="Present">Present</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.dentalFractured === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.dentalFracturedOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              dentalFracturedOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -2400,6 +2317,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             dentalMobility: e.target.value,
+                            dentalMobilityOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral.dentalMobilityOther,
                           },
                         })
                       }
@@ -2410,7 +2331,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="Grade I">Grade I</option>
                       <option value="Grade II">Grade II</option>
                       <option value="Grade III">Grade III</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.dentalMobility === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.dentalMobilityOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              dentalMobilityOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -2425,6 +2364,10 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             dentalMalocclusion: e.target.value,
+                            dentalMalocclusionOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral.dentalMalocclusionOther,
                           },
                         })
                       }
@@ -2433,7 +2376,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="">Select...</option>
                       <option value="None">None</option>
                       <option value="Present">Present</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.dentalMalocclusion === "Other" && (
+                      <input
+                        type="text"
+                        value={formData.intraOral.dentalMalocclusionOther}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              dentalMalocclusionOther: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -2448,6 +2409,11 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           intraOral: {
                             ...formData.intraOral,
                             dentalAttritionAbrasionErosion: e.target.value,
+                            dentalAttritionAbrasionErosionOther:
+                              e.target.value !== "Other"
+                                ? ""
+                                : formData.intraOral
+                                    .dentalAttritionAbrasionErosionOther,
                           },
                         })
                       }
@@ -2459,7 +2425,29 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                       <option value="Abrasion">Abrasion</option>
                       <option value="Erosion">Erosion</option>
                       <option value="Combined">Combined</option>
+                      <option value="Other">Other</option>
                     </select>
+                    {formData.intraOral.dentalAttritionAbrasionErosion ===
+                      "Other" && (
+                      <input
+                        type="text"
+                        value={
+                          formData.intraOral.dentalAttritionAbrasionErosionOther
+                        }
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            intraOral: {
+                              ...formData.intraOral,
+                              dentalAttritionAbrasionErosionOther:
+                                e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Please specify..."
+                        className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -2481,6 +2469,11 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               periodontalPocketDepth: e.target.value,
+                              periodontalPocketDepthOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral
+                                      .periodontalPocketDepthOther,
                             },
                           })
                         }
@@ -2493,7 +2486,26 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                           Moderate (6-7mm)
                         </option>
                         <option value="Severe (≥8mm)">Severe (≥8mm)</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.periodontalPocketDepth ===
+                        "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.periodontalPocketDepthOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                periodontalPocketDepthOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
 
                     <div>
@@ -2508,6 +2520,11 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                             intraOral: {
                               ...formData.intraOral,
                               periodontalRecession: e.target.value,
+                              periodontalRecessionOther:
+                                e.target.value !== "Other"
+                                  ? ""
+                                  : formData.intraOral
+                                      .periodontalRecessionOther,
                             },
                           })
                         }
@@ -2517,7 +2534,25 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                         <option value="None">None</option>
                         <option value="Localized">Localized</option>
                         <option value="Generalized">Generalized</option>
+                        <option value="Other">Other</option>
                       </select>
+                      {formData.intraOral.periodontalRecession === "Other" && (
+                        <input
+                          type="text"
+                          value={formData.intraOral.periodontalRecessionOther}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              intraOral: {
+                                ...formData.intraOral,
+                                periodontalRecessionOther: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="Please specify..."
+                          className="w-full px-3 py-2 mt-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2640,134 +2675,6 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
           </div>
         </section>
 
-        {/* INVESTIGATIONS / X-RAY */}
-        <section className="pb-4 border-b border-gray-200 md:pb-6">
-          <h3 className="mb-4 text-lg font-semibold text-indigo-700 md:text-xl">
-            Investigations / X-Ray
-          </h3>
-
-          <div className="space-y-4">
-            {/* Investigation / X-Ray Type Selector */}
-            <div>
-              <label className="block mb-2 text-sm font-medium text-gray-700">
-                Investigation / X-Ray Type
-              </label>
-              <div className="space-y-3">
-                <select
-                  value=""
-                  onChange={(e) => {
-                    if (e.target.value === "OTHER") {
-                      // Don't add "OTHER" directly, just show the input
-                      e.target.value = "";
-                    } else if (e.target.value) {
-                      const selected = XRAY_TYPES.find(
-                        (t) => t.value === e.target.value
-                      );
-                      if (
-                        selected &&
-                        !formData.investigations.some(
-                          (i) => i === e.target.value
-                        )
-                      ) {
-                        setFormData({
-                          ...formData,
-                          investigations: [
-                            ...formData.investigations,
-                            e.target.value,
-                          ],
-                        });
-                      }
-                      e.target.value = "";
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">Select Investigation / X-Ray Type...</option>
-                  {XRAY_CATEGORIES.map((category) => {
-                    const typesInCategory = XRAY_TYPES.filter(
-                      (t) => t.category === category
-                    );
-                    if (typesInCategory.length === 0) return null;
-                    return (
-                      <optgroup key={category} label={category}>
-                        {typesInCategory
-                          .filter(
-                            (t) => !formData.investigations.includes(t.value)
-                          )
-                          .map((type) => (
-                            <option key={type.value} value={type.value}>
-                              {type.abbreviation
-                                ? `[${type.abbreviation}] ${type.name}`
-                                : type.name}
-                              {type.description ? ` - ${type.description}` : ""}
-                            </option>
-                          ))}
-                      </optgroup>
-                    );
-                  })}
-                  <option value="OTHER">Other (Custom)</option>
-                </select>
-
-                {/* Selected Investigations Display */}
-                {formData.investigations.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {formData.investigations.map((investigationValue) => {
-                      const investigation = XRAY_TYPES.find(
-                        (t) => t.value === investigationValue
-                      );
-                      if (!investigation) return null;
-                      return (
-                        <span
-                          key={investigationValue}
-                          className="inline-flex items-center px-3 py-1 text-sm text-indigo-800 bg-indigo-100 rounded-full"
-                        >
-                          {investigation.abbreviation
-                            ? `[${investigation.abbreviation}] ${investigation.name}`
-                            : investigation.name}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setFormData({
-                                ...formData,
-                                investigations: formData.investigations.filter(
-                                  (i) => i !== investigationValue
-                                ),
-                              });
-                            }}
-                            className="ml-2 font-semibold text-indigo-600 hover:text-indigo-800"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Other (Custom) Text Input */}
-                <div>
-                  <input
-                    type="text"
-                    value={formData.investigationOther}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        investigationOther: e.target.value,
-                      })
-                    }
-                    placeholder="Or enter custom investigation / X-ray type..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <p className="mt-1 text-xs text-gray-500">
-                    Enter any custom investigation or X-ray type not listed
-                    above
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
         {/* A - ASSESSMENT */}
         <section className="pb-4 border-b border-gray-200 md:pb-6">
           <h3 className="mb-4 text-lg font-semibold text-indigo-700 md:text-xl">
@@ -2793,7 +2700,9 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
             </div>
 
             {/* Tooth Chart - Only show when diagnosis is selected */}
-            {formData.primaryDiagnosis && (
+            {(formData.primaryDiagnosis ||
+              (formData.secondaryDiagnoses &&
+                formData.secondaryDiagnoses.length > 0)) && (
               <div>
                 <label className="block mb-2 text-sm font-medium text-gray-700">
                   Tooth Chart - Select Affected Teeth
@@ -2803,10 +2712,24 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                   onTeethChange={(teeth) =>
                     setFormData({ ...formData, affectedTeeth: teeth })
                   }
-                  toothConditions={formData.toothConditions}
-                  onConditionChange={(conditions) =>
-                    setFormData({ ...formData, toothConditions: conditions })
-                  }
+                  procedureLogs={formData.procedureLogs}
+                  primaryDiagnosis={formData.primaryDiagnosis}
+                  secondaryDiagnoses={formData.secondaryDiagnoses}
+                  onProcedureSelectForTooth={(toothNumber, procedureName) => {
+                    // Add new procedure for the selected tooth
+                    const newProcedure = {
+                      name: procedureName,
+                      description: procedureName,
+                      tooth: String(toothNumber),
+                      duration: null,
+                      anesthesia: null,
+                      notes: null,
+                    };
+                    setFormData({
+                      ...formData,
+                      procedureLogs: [...formData.procedureLogs, newProcedure],
+                    });
+                  }}
                 />
               </div>
             )}
@@ -3000,7 +2923,6 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                 }
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
-                <option value={TREATMENT_STATUS.PENDING}>Pending</option>
                 <option value={TREATMENT_STATUS.IN_PROGRESS}>
                   In Progress
                 </option>
@@ -3028,7 +2950,6 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
                 }
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 placeholder="Enter dentist signature"
-                disabled={isFormDisabled}
               />
               <p className="mt-1 text-xs text-gray-500">
                 Enter the dentist's signature or name
@@ -3048,56 +2969,6 @@ const TreatmentFormEnhanced = ({ appointment, onTreatmentSaved }) => {
           </button>
         </div>
       </form>
-
-      {/* Navigation Modal after treatment completion */}
-      {showNavigationModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-xl font-bold text-gray-900 mb-4">
-              Treatment Completed!
-            </h3>
-            <p className="text-gray-600 mb-6">
-              Where would you like to go next?
-            </p>
-            <div className="space-y-3">
-              <button
-                onClick={() => {
-                  setShowNavigationModal(false);
-                  navigate("/dentist");
-                }}
-                className="w-full px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium min-h-[44px]"
-              >
-                Go to Branch/Dentist View
-              </button>
-              <button
-                onClick={() => {
-                  setShowNavigationModal(false);
-                  navigate("/reception");
-                }}
-                className="w-full px-4 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 font-medium min-h-[44px]"
-              >
-                Go to Reception
-              </button>
-              <button
-                onClick={() => {
-                  setShowNavigationModal(false);
-                  navigate("/reception/payments/all");
-                }}
-                className="w-full px-4 py-3 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium min-h-[44px] flex items-center justify-center gap-2"
-              >
-                <span>→</span>
-                <span>View All Payments</span>
-              </button>
-              <button
-                onClick={() => setShowNavigationModal(false)}
-                className="w-full px-4 py-3 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500 font-medium min-h-[44px]"
-              >
-                Stay Here
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

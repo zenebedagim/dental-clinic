@@ -7,10 +7,6 @@ const {
   sendToDentist,
   getXrayImages,
   deleteXrayImage,
-  createXrayShare,
-  getXrayShares,
-  revokeXrayShare,
-  viewSharedXray,
 } = require("../controllers/xray.controller");
 const authMiddleware = require("../middleware/auth.middleware");
 const checkRole = require("../middleware/role.middleware");
@@ -19,9 +15,6 @@ const {
   validateUploadXrayResult,
   validateSendToDentist,
   validateBranchIdQuery,
-  validateCreateXrayShare,
-  validateXrayShareId,
-  validateShareToken,
 } = require("../validators/xray.validator");
 
 const storage = multer.memoryStorage();
@@ -52,7 +45,7 @@ router.post(
 router.get(
   "/",
   authMiddleware,
-  checkRole("XRAY"),
+  checkRole("ADMIN", "XRAY"),
   validateBranchIdQuery,
   validate,
   getXrayRequests
@@ -69,7 +62,7 @@ router.put(
 router.get(
   "/:xrayId/images",
   authMiddleware,
-  checkRole("XRAY", "DENTIST"),
+  checkRole("ADMIN", "XRAY", "DENTIST"),
   getXrayImages
 );
 
@@ -79,29 +72,5 @@ router.delete(
   checkRole("XRAY"),
   deleteXrayImage
 );
-
-// Share routes (protected)
-router.post(
-  "/:xrayId/share",
-  authMiddleware,
-  checkRole("XRAY"),
-  validateCreateXrayShare,
-  validate,
-  createXrayShare
-);
-
-router.get("/:xrayId/shares", authMiddleware, checkRole("XRAY"), getXrayShares);
-
-router.delete(
-  "/share/:shareId",
-  authMiddleware,
-  checkRole("XRAY"),
-  validateXrayShareId,
-  validate,
-  revokeXrayShare
-);
-
-// Public share route (no auth required)
-router.post("/share/:token", validateShareToken, validate, viewSharedXray);
 
 module.exports = router;

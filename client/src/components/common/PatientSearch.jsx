@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import api from "../../services/api";
 import useBranch from "../../hooks/useBranch";
 import usePatient from "../../hooks/usePatient";
 import useRoleAccess from "../../hooks/useRoleAccess";
 import Modal from "./Modal";
+import { exportPatientsToCSV } from "../../utils/csvExporter";
+import { useToast } from "../../hooks/useToast";
 
 const PatientSearch = () => {
   const { selectedBranch } = useBranch();
@@ -19,56 +21,155 @@ const PatientSearch = () => {
   const [loading, setLoading] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const searchTimeoutRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const { success: showSuccess, error: showError } = useToast();
 
   const isReception = isRole("RECEPTION");
 
   useEffect(() => {
+    // Cancel previous timeout
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
 
+    // Cancel previous API request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
     if (searchQuery.trim().length < 2) {
       setSearchResults([]);
+      setLoading(false);
       return;
     }
 
+    // Increase debounce to 600ms to reduce API calls and avoid rate limiting
     searchTimeoutRef.current = setTimeout(() => {
       searchPatients(searchQuery.trim());
-    }, 300);
+    }, 600); // Increased debounce to prevent rate limiting
 
     return () => {
       if (searchTimeoutRef.current) {
         clearTimeout(searchTimeoutRef.current);
       }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
   const searchPatients = async (query) => {
     try {
       setLoading(true);
+
+      // Save search to history
+      if (query.trim().length >= 2) {
+        const searchHistory = JSON.parse(
+          localStorage.getItem("patientSearchHistory") || "[]"
+        );
+        if (!searchHistory.includes(query.trim())) {
+          searchHistory.unshift(query.trim());
+          // Keep only last 10 searches
+          const trimmed = searchHistory.slice(0, 10);
+          localStorage.setItem("patientSearchHistory", JSON.stringify(trimmed));
+        }
+      }
+
       // First try to search in local context patients
       const queryLower = query.toLowerCase();
       const localResults = allPatients.filter(
         (p) =>
           p.name?.toLowerCase().includes(queryLower) ||
           p.phone?.includes(query) ||
+          p.cardNo?.toLowerCase().includes(queryLower) ||
           p.email?.toLowerCase().includes(queryLower)
       );
 
+      // Show local results immediately if found, but still search API for completeness
+      // This provides instant feedback while getting full results
       if (localResults.length > 0) {
         setSearchResults(localResults.slice(0, 10));
-        setLoading(false);
+        // Don't return - continue to API search for more complete results
+      }
+
+      // Determine search type: phone, cardNo, or name
+      // Phone: only digits, spaces, dashes, parentheses, plus signs
+      const isPhone =
+        /^[\d\s\-+()]+$/.test(query.trim()) && /[\d]/.test(query.trim());
+
+      // CardNo: alphanumeric but more specific - typically shorter and has specific format
+      // Only treat as cardNo if it's short (max 20 chars) and looks like an ID/card number
+      // Not just any alphanumeric string (that would match names too)
+      const trimmedQuery = query.trim();
+      const isCardNo =
+        /^[A-Z0-9]{3,20}$/i.test(trimmedQuery) &&
+        !/^[a-z]+$/i.test(trimmedQuery) && // Not just letters (that's a name)
+        (/[0-9]/.test(trimmedQuery) || trimmedQuery.length <= 8); // Has numbers or is short ID
+
+      // Build search params - default to name search for most queries
+      const searchParams = { limit: 10 };
+      if (isPhone) {
+        searchParams.phone = trimmedQuery;
+      } else if (isCardNo) {
+        searchParams.cardNo = trimmedQuery;
+      } else {
+        // Default to name search (most common case)
+        searchParams.name = trimmedQuery;
+      }
+
+      // Note: We don't send branchId to search endpoint
+      // Patient search should find ALL patients regardless of branch
+      // This allows finding patients even if they don't have appointments yet
+
+      // If no local results, search via API
+      // Cancel any previous request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      // Create new AbortController for this request
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+
+      const response = await api.get("/patients/search", {
+        params: searchParams,
+        signal: abortController.signal,
+      });
+
+      // The API interceptor already extracts data from { success: true, data: [...] }
+      // So response.data should be the array directly
+      const patients = Array.isArray(response.data) ? response.data : [];
+
+      setSearchResults(patients);
+    } catch (err) {
+      // Ignore abort errors (expected when user types quickly)
+      if (
+        err.name === "CanceledError" ||
+        err.code === "ERR_CANCELED" ||
+        err.message === "canceled"
+      ) {
+        console.log("Search request canceled (user typing)");
         return;
       }
 
-      // If no local results, search via API
-      const response = await api.get("/patients/search", {
-        params: { name: query, limit: 10 },
-      });
-      const patients = response.data?.data || response.data || [];
-      setSearchResults(patients);
-    } catch (err) {
-      console.error("Error searching patients:", err);
+      // Handle rate limiting specifically
+      if (err.response?.status === 429) {
+        const retryAfter = err.response?.data?.retryAfter || 10;
+        showError(
+          `Too many search requests. Please wait ${retryAfter} seconds and try again.`
+        );
+        console.error(
+          "Rate limit exceeded. Please type slower or wait a moment."
+        );
+      } else {
+        console.error("Error searching patients:", err);
+        const errorMessage =
+          err.response?.data?.message ||
+          err.message ||
+          "Failed to search patients";
+        showError(errorMessage);
+      }
       setSearchResults([]);
     } finally {
       setLoading(false);
@@ -154,23 +255,44 @@ const PatientSearch = () => {
       </div>
 
       {searchResults.length > 0 && (
-        <div className="mt-4 border border-gray-200 rounded-md max-h-60 overflow-y-auto">
-          {searchResults.map((patient) => (
-            <div
-              key={patient.id}
-              onClick={() => handlePatientSelect(patient)}
-              className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+        <>
+          <div className="mt-4 flex justify-between items-center">
+            <p className="text-sm text-gray-600">
+              Found {searchResults.length} patient(s)
+            </p>
+            <button
+              onClick={() => {
+                try {
+                  exportPatientsToCSV(searchResults);
+                  showSuccess("Patient data exported successfully");
+                } catch (err) {
+                  showError("Failed to export patient data");
+                  console.error("Export error:", err);
+                }
+              }}
+              className="px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-md hover:bg-indigo-100 transition-colors"
             >
-              <div className="font-medium text-gray-900">{patient.name}</div>
-              {patient.phone && (
-                <div className="text-sm text-gray-500">{patient.phone}</div>
-              )}
-              {patient.email && (
-                <div className="text-sm text-gray-500">{patient.email}</div>
-              )}
-            </div>
-          ))}
-        </div>
+              📥 Export to CSV
+            </button>
+          </div>
+          <div className="mt-2 border border-gray-200 rounded-md max-h-60 overflow-y-auto">
+            {searchResults.map((patient) => (
+              <div
+                key={patient.id}
+                onClick={() => handlePatientSelect(patient)}
+                className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+              >
+                <div className="font-medium text-gray-900">{patient.name}</div>
+                {patient.phone && (
+                  <div className="text-sm text-gray-500">{patient.phone}</div>
+                )}
+                {patient.email && (
+                  <div className="text-sm text-gray-500">{patient.email}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {searchQuery.length >= 2 && searchResults.length === 0 && !loading && (
@@ -382,4 +504,4 @@ const PatientSearch = () => {
   );
 };
 
-export default PatientSearch;
+export default memo(PatientSearch);

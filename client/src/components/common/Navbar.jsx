@@ -1,6 +1,5 @@
 import { useNavigate } from "react-router-dom";
 import useBranch from "../../hooks/useBranch";
-import NotificationCenter from "./NotificationCenter";
 
 const Navbar = ({ user }) => {
   const navigate = useNavigate();
@@ -10,6 +9,8 @@ const Navbar = ({ user }) => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     localStorage.removeItem("selectedBranch");
+    // Dispatch custom event to trigger socket disconnection
+    window.dispatchEvent(new Event("tokenChanged"));
     navigate("/login");
   };
 
@@ -18,6 +19,7 @@ const Navbar = ({ user }) => {
       RECEPTION: "Reception",
       DENTIST: "Dentist",
       XRAY: "X-Ray Doctor",
+      ADMIN: "Administrator",
     };
     return roleNames[role] || role;
   };
@@ -40,7 +42,6 @@ const Navbar = ({ user }) => {
             <span className="hidden text-sm text-gray-700 md:inline-block sm:text-base">
               {user?.name} ({getRoleDisplayName(user?.role)})
             </span>
-            <NotificationCenter />
             <button
               onClick={handleLogout}
               className="px-3 py-2 text-sm font-bold text-white bg-red-500 rounded hover:bg-red-700 sm:px-4 sm:text-base"

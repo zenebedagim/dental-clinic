@@ -1,11 +1,14 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
+import { useSearchParams } from "react-router-dom";
 import api from "../../../services/api";
 import useBranch from "../../../hooks/useBranch";
 import { useToast } from "../../../hooks/useToast";
+import { validatePhone } from "../../../utils/phoneValidator";
 
-const AppointmentForm = ({ onAppointmentCreated }) => {
+const AppointmentForm = memo(({ onAppointmentCreated }) => {
   const { selectedBranch } = useBranch();
   const { success: showSuccess, error: showError } = useToast();
+  const [searchParams] = useSearchParams();
   const [formData, setFormData] = useState({
     patientName: "",
     gender: "",
@@ -28,6 +31,8 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [conflicts, setConflicts] = useState([]);
   const availabilityTimeoutRef = useRef(null);
+  const availabilityControllerRef = useRef(null);
+  const [phoneError, setPhoneError] = useState("");
 
   const filterDentistsByBranch = (dentistList, branchId) => {
     if (!branchId) {
@@ -84,6 +89,26 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Read URL parameters and pre-fill form data
+  useEffect(() => {
+    const patientName = searchParams.get("patientName");
+    const phoneNumber = searchParams.get("phoneNumber");
+    const gender = searchParams.get("gender");
+    const address = searchParams.get("address");
+    const cardNo = searchParams.get("cardNo");
+
+    if (patientName || phoneNumber || gender || address || cardNo) {
+      setFormData((prev) => ({
+        ...prev,
+        ...(patientName && { patientName: decodeURIComponent(patientName) }),
+        ...(phoneNumber && { phoneNumber: decodeURIComponent(phoneNumber) }),
+        ...(gender && { gender: decodeURIComponent(gender) }),
+        ...(address && { address: decodeURIComponent(address) }),
+        ...(cardNo && { cardNo: decodeURIComponent(cardNo) }),
+      }));
+    }
+  }, [searchParams]);
+
   // Set default branch when selectedBranch changes (only if branchId is not already set)
   useEffect(() => {
     if (selectedBranch?.id) {
@@ -122,6 +147,15 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
       return;
     }
 
+    // Cancel previous request if still pending
+    if (availabilityControllerRef.current) {
+      availabilityControllerRef.current.abort();
+    }
+
+    // Create new AbortController for this request
+    const controller = new AbortController();
+    availabilityControllerRef.current = controller;
+
     try {
       setCheckingAvailability(true);
       const appointmentDateTime = `${formData.date}T${formData.time}`;
@@ -136,7 +170,13 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
           date: formData.date,
           startTime: formData.time,
         },
+        signal: controller.signal,
       });
+
+      // Check if request was aborted
+      if (controller.signal.aborted) {
+        return;
+      }
 
       const availabilityData = response.data?.data || response.data;
       setAvailabilityCheck(availabilityData);
@@ -144,7 +184,14 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
       // Check for conflicts with existing appointments (use selected branch ID)
       const appointmentsResponse = await api.get("/appointments/reception", {
         params: { branchId: branchId },
+        signal: controller.signal,
       });
+
+      // Check if request was aborted
+      if (controller.signal.aborted) {
+        return;
+      }
+
       const appointments =
         appointmentsResponse.data?.data || appointmentsResponse.data || [];
 
@@ -152,21 +199,29 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
       const conflictingAppointments = appointments.filter((apt) => {
         if (
           apt.dentistId !== formData.dentistId ||
-          apt.status === "COMPLETED"
+          apt.status === "COMPLETED" ||
+          apt.status === "CANCELLED"
         ) {
           return false;
         }
         const aptDate = new Date(apt.date);
         const timeDiff = Math.abs(appointmentDate - aptDate) / (1000 * 60);
-        return timeDiff < 60; // Conflict if within 60 minutes
+        return timeDiff < 90; // Conflict if within 90 minutes (improved from 60)
       });
 
       setConflicts(conflictingAppointments);
     } catch (err) {
+      // Ignore abort errors
+      if (err.name === "AbortError" || err.name === "CanceledError") {
+        return;
+      }
       console.error("Error checking availability:", err);
       setAvailabilityCheck(null);
     } finally {
-      setCheckingAvailability(false);
+      // Only clear loading if this is still the current request
+      if (availabilityControllerRef.current === controller) {
+        setCheckingAvailability(false);
+      }
     }
   };
 
@@ -176,15 +231,21 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
       clearTimeout(availabilityTimeoutRef.current);
     }
 
+    // Cancel any pending requests
+    if (availabilityControllerRef.current) {
+      availabilityControllerRef.current.abort();
+    }
+
     if (
       formData.dentistId &&
       formData.branchId &&
       formData.date &&
       formData.time
     ) {
+      // Reduced debounce to 300ms for better UX
       availabilityTimeoutRef.current = setTimeout(() => {
         checkDoctorAvailability();
-      }, 500);
+      }, 300);
     } else {
       setAvailabilityCheck(null);
       setConflicts([]);
@@ -194,13 +255,62 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
       if (availabilityTimeoutRef.current) {
         clearTimeout(availabilityTimeoutRef.current);
       }
+      // Cancel request on unmount or dependency change
+      if (availabilityControllerRef.current) {
+        availabilityControllerRef.current.abort();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.dentistId, formData.branchId, formData.date, formData.time]);
 
+  // Load form data from localStorage on mount
+  useEffect(() => {
+    const savedFormData = localStorage.getItem("appointmentFormDraft");
+    if (savedFormData) {
+      try {
+        const parsed = JSON.parse(savedFormData);
+        // Only restore if it's recent (within 24 hours)
+        const savedTime = parsed._timestamp;
+        if (savedTime && Date.now() - savedTime < 24 * 60 * 60 * 1000) {
+          const { _timestamp, ...rest } = parsed;
+          setFormData(rest);
+        }
+      } catch (err) {
+        console.error("Error loading form draft:", err);
+      }
+    }
+  }, []);
+
+  // Save form data to localStorage on change
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      const dataToSave = {
+        ...formData,
+        _timestamp: Date.now(),
+      };
+      localStorage.setItem("appointmentFormDraft", JSON.stringify(dataToSave));
+    }, 500); // Debounce saves
+
+    return () => clearTimeout(timeoutId);
+  }, [formData]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => {
+      const updated = { ...prev, [name]: value };
+
+      // Validate phone number if it's the phone field
+      if (name === "phoneNumber") {
+        const validation = validatePhone(value, "ET"); // Ethiopia
+        if (value && !validation.isValid) {
+          setPhoneError(validation.error || "Invalid phone number");
+        } else {
+          setPhoneError("");
+        }
+      }
+
+      return updated;
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -232,21 +342,239 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
         return;
       }
 
+      // Validate phone format
+      const phoneValidation = validatePhone(formData.phoneNumber, "ET");
+      if (!phoneValidation.isValid) {
+        showError(phoneValidation.error || "Invalid phone number format");
+        setPhoneError(phoneValidation.error || "Invalid phone number format");
+        setLoading(false);
+        return;
+      }
+
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "AppointmentForm.jsx:354",
+            message: "before patient find/create",
+            data: {
+              patientName: formData.patientName,
+              phoneNumber: formData.phoneNumber,
+              hasPatientId: false,
+            },
+            timestamp: Date.now(),
+            sessionId: "debug-session",
+            runId: "run1",
+            hypothesisId: "H1",
+          }),
+        }
+      ).catch(() => {});
+      // #endregion
+
+      // Step 1: Find or create patient
+      let patientId = null;
+
+      // Try to find existing patient by phone number
+      if (formData.phoneNumber) {
+        try {
+          // #region agent log
+          fetch(
+            "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                location: "AppointmentForm.jsx:370",
+                message: "searching for existing patient",
+                data: { phoneNumber: formData.phoneNumber },
+                timestamp: Date.now(),
+                sessionId: "debug-session",
+                runId: "run1",
+                hypothesisId: "H1",
+              }),
+            }
+          ).catch(() => {});
+          // #endregion
+
+          const searchResponse = await api.get("/patients/search", {
+            params: { phone: formData.phoneNumber, limit: 1 },
+          });
+          const existingPatients = Array.isArray(searchResponse.data)
+            ? searchResponse.data
+            : [];
+
+          // #region agent log
+          fetch(
+            "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                location: "AppointmentForm.jsx:385",
+                message: "patient search result",
+                data: {
+                  found: existingPatients.length > 0,
+                  patientId: existingPatients[0]?.id || null,
+                },
+                timestamp: Date.now(),
+                sessionId: "debug-session",
+                runId: "run1",
+                hypothesisId: "H1",
+              }),
+            }
+          ).catch(() => {});
+          // #endregion
+
+          if (existingPatients.length > 0) {
+            patientId = existingPatients[0].id;
+          }
+        } catch (err) {
+          console.error("Error searching for patient:", err);
+          // Continue to create new patient
+        }
+      }
+
+      // Step 2: Create patient if not found
+      if (!patientId) {
+        try {
+          // #region agent log
+          fetch(
+            "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                location: "AppointmentForm.jsx:400",
+                message: "creating new patient",
+                data: {
+                  patientName: formData.patientName,
+                  phoneNumber: formData.phoneNumber,
+                },
+                timestamp: Date.now(),
+                sessionId: "debug-session",
+                runId: "run1",
+                hypothesisId: "H1",
+              }),
+            }
+          ).catch(() => {});
+          // #endregion
+
+          // Calculate dateOfBirth from age if provided
+          let dateOfBirth = null;
+          if (formData.age) {
+            const ageNum = parseInt(formData.age, 10);
+            if (!isNaN(ageNum) && ageNum > 0) {
+              const today = new Date();
+              dateOfBirth = new Date(
+                today.getFullYear() - ageNum,
+                today.getMonth(),
+                today.getDate()
+              );
+            }
+          }
+
+          const patientData = {
+            name: formData.patientName,
+            phone: formData.phoneNumber,
+            gender: formData.gender || null,
+            dateOfBirth: dateOfBirth
+              ? dateOfBirth.toISOString().split("T")[0]
+              : null,
+            address: formData.address || null,
+            cardNo: formData.cardNo || null,
+          };
+
+          const patientResponse = await api.post("/patients", patientData);
+          patientId =
+            patientResponse.data?.id ||
+            (Array.isArray(patientResponse.data)
+              ? patientResponse.data[0]?.id
+              : null) ||
+            patientResponse.data?.data?.id;
+
+          // #region agent log
+          fetch(
+            "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                location: "AppointmentForm.jsx:435",
+                message: "patient created",
+                data: {
+                  patientId,
+                  patientResponse: patientResponse.data,
+                },
+                timestamp: Date.now(),
+                sessionId: "debug-session",
+                runId: "run1",
+                hypothesisId: "H1",
+              }),
+            }
+          ).catch(() => {});
+          // #endregion
+
+          if (!patientId) {
+            throw new Error("Failed to get patient ID from creation response");
+          }
+        } catch (err) {
+          console.error("Error creating patient:", err);
+          showError(
+            err.response?.data?.message ||
+              "Failed to create patient. Please try again."
+          );
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Step 3: Create appointment with patientId
+      if (!patientId) {
+        showError("Failed to get patient ID");
+        setLoading(false);
+        return;
+      }
+
       const dataToSend = {
+        patientId, // REQUIRED by server
         patientName: formData.patientName,
-        gender: formData.gender || null,
-        age: formData.age || null,
-        phoneNumber: formData.phoneNumber || null,
-        address: formData.address || null,
-        cardNo: formData.cardNo || null,
-        branchId: formData.branchId, // Use selected branch
+        branchId: formData.branchId,
         dentistId: formData.dentistId,
         date: new Date(appointmentDateTime).toISOString(),
         visitReason: formData.visitReason || null,
       };
 
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "AppointmentForm.jsx:465",
+            message: "sending appointment request",
+            data: {
+              patientId,
+              hasPatientId: !!patientId,
+              dataToSend,
+            },
+            timestamp: Date.now(),
+            sessionId: "debug-session",
+            runId: "run1",
+            hypothesisId: "H1",
+          }),
+        }
+      ).catch(() => {});
+      // #endregion
+
       await api.post("/appointments", dataToSend);
       showSuccess("Appointment scheduled successfully!");
+
+      // Clear form draft from localStorage
+      localStorage.removeItem("appointmentFormDraft");
 
       // Reset form
       setFormData({
@@ -264,6 +592,7 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
       });
       setAvailabilityCheck(null);
       setConflicts([]);
+      setPhoneError("");
 
       // Dispatch event to refresh appointments (dispatch before navigation)
       window.dispatchEvent(new CustomEvent("appointment-created"));
@@ -383,9 +712,16 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
               required
               value={formData.phoneNumber}
               onChange={handleChange}
-              placeholder="Enter phone number"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="0912345678 (Ethiopia format)"
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 ${
+                phoneError
+                  ? "border-red-500 focus:ring-red-500"
+                  : "border-gray-300 focus:ring-indigo-500"
+              }`}
             />
+            {phoneError && (
+              <p className="mt-1 text-sm text-red-600">{phoneError}</p>
+            )}
           </div>
 
           {/* Address */}
@@ -609,6 +945,8 @@ const AppointmentForm = ({ onAppointmentCreated }) => {
       </form>
     </div>
   );
-};
+});
+
+AppointmentForm.displayName = "AppointmentForm";
 
 export default AppointmentForm;

@@ -17,53 +17,71 @@ const DentistDashboardHome = () => {
     if (!selectedBranch?.id) return;
     setLoading(true);
     try {
-      // Fetch appointments (already includes xrayResult data)
+      // Fetch appointments - already filtered by dentist role via /appointments/dentist endpoint
+      // This endpoint only returns appointments for the authenticated dentist
       const appointmentsResponse = await api.get("/appointments/dentist", {
         params: { branchId: selectedBranch.id },
       });
       const appointments =
         appointmentsResponse.data?.data || appointmentsResponse.data || [];
 
+      // Pre-calculate dates once for better performance
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      const todayAppointments = appointments.filter((apt) => {
+      // Single pass through appointments for better performance
+      let todayAppointmentsCount = 0;
+      let pendingTreatmentsCount = 0;
+      let completedTodayCount = 0;
+      let pendingXrayRequestsCount = 0;
+
+      appointments.forEach((apt) => {
         const aptDate = new Date(apt.date);
-        return aptDate >= today && aptDate < tomorrow;
+        const isToday = aptDate >= today && aptDate < tomorrow;
+
+        // Count today's appointments
+        if (isToday) {
+          todayAppointmentsCount++;
+        }
+
+        // Count pending treatments (only for this dentist)
+        if (apt.treatment?.status === "IN_PROGRESS") {
+          pendingTreatmentsCount++;
+        }
+
+        // Count completed treatments today (only for this dentist)
+        if (apt.treatment?.status === "COMPLETED") {
+          const treatmentDate = new Date(apt.treatment.updatedAt);
+          if (treatmentDate >= today && treatmentDate < tomorrow) {
+            completedTodayCount++;
+          }
+        }
+
+        // Count pending X-ray requests (only for this dentist's appointments)
+        if (apt.xrayId) {
+          if (!apt.xrayResult || !apt.xrayResult.sentToDentist) {
+            pendingXrayRequestsCount++;
+          }
+        }
       });
 
-      const pendingTreatments = appointments.filter(
-        (apt) => apt.treatment && apt.treatment.status === "IN_PROGRESS"
-      ).length;
-
-      const completedToday = appointments.filter((apt) => {
-        if (!apt.treatment) return false;
-        const treatmentDate = new Date(apt.treatment.updatedAt);
-        return (
-          treatmentDate >= today &&
-          treatmentDate < tomorrow &&
-          apt.treatment.status === "COMPLETED"
-        );
-      }).length;
-
-      // X-ray requests: appointments where xrayId is set (X-ray was requested)
-      // Pending: xrayId exists but no result OR result not sent to dentist yet
-      const pendingXrayRequests = appointments.filter((apt) => {
-        if (!apt.xrayId) return false; // No X-ray requested
-        if (!apt.xrayResult) return true; // X-ray requested but no result yet
-        return !apt.xrayResult.sentToDentist; // Result exists but not sent to dentist
-      }).length;
-
       setStats({
-        todayAppointments: todayAppointments.length,
-        pendingTreatments,
-        completedToday,
-        xrayRequests: pendingXrayRequests,
+        todayAppointments: todayAppointmentsCount,
+        pendingTreatments: pendingTreatmentsCount,
+        completedToday: completedTodayCount,
+        xrayRequests: pendingXrayRequestsCount,
       });
     } catch (err) {
       console.error("Error fetching dashboard stats:", err);
+      // Set stats to 0 on error
+      setStats({
+        todayAppointments: 0,
+        pendingTreatments: 0,
+        completedToday: 0,
+        xrayRequests: 0,
+      });
     } finally {
       setLoading(false);
     }
@@ -73,33 +91,38 @@ const DentistDashboardHome = () => {
     fetchDashboardStats();
   }, [fetchDashboardStats]);
 
+  // Stats cards - all links go to dentist-specific pages that filter by role
+  // The endpoints (/appointments/dentist, etc.) automatically filter by authenticated dentist
   const statCards = [
     {
-      label: "Today's Appointments",
+      label: "Appointments",
       value: stats.todayAppointments,
       icon: "📅",
       color: "bg-blue-500",
       textColor: "text-blue-700",
       bgColor: "bg-blue-50",
       link: "/dentist/patients",
+      // No filter - shows all appointments (new appointments with status PENDING)
     },
     {
-      label: "Pending Treatments",
+      label: "In Progress",
       value: stats.pendingTreatments,
       icon: "⏳",
       color: "bg-yellow-500",
       textColor: "text-yellow-700",
       bgColor: "bg-yellow-50",
-      link: "/dentist/treatment",
+      link: "/dentist/patients",
+      state: { filter: "inProgress", searchMode: true }, // Pass searchMode to show Search All Patients view
     },
     {
-      label: "Completed Today",
+      label: "Completed",
       value: stats.completedToday,
       icon: "✅",
       color: "bg-green-500",
       textColor: "text-green-700",
       bgColor: "bg-green-50",
-      link: "/dentist/treatment",
+      link: "/dentist/patients",
+      state: { filter: "completed", searchMode: true }, // Pass searchMode to show Search All Patients view
     },
     {
       label: "X-Ray Requests",
@@ -108,7 +131,7 @@ const DentistDashboardHome = () => {
       color: "bg-purple-500",
       textColor: "text-purple-700",
       bgColor: "bg-purple-50",
-      link: "/dentist/xray-requests",
+      link: "/dentist/xray-requests", // Uses /appointments/dentist endpoint (role-filtered)
     },
   ];
 
@@ -144,6 +167,7 @@ const DentistDashboardHome = () => {
               <Link
                 key={index}
                 to={card.link}
+                state={card.state || {}}
                 className={`${card.bgColor} rounded-lg shadow-md p-4 md:p-6 border border-gray-200 hover:shadow-lg transition-shadow`}
               >
                 <div className="flex items-center justify-between">
@@ -171,9 +195,10 @@ const DentistDashboardHome = () => {
             <h2 className="mb-4 text-lg font-bold text-gray-900 md:text-xl">
               Quick Actions
             </h2>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Link
                 to="/dentist/patients"
+                state={{ searchMode: true }}
                 className="bg-indigo-600 text-white px-4 md:px-6 py-3 rounded-lg hover:bg-indigo-700 transition-colors text-center font-medium min-h-[44px] flex items-center justify-center"
               >
                 👥 View My Patients
@@ -183,12 +208,6 @@ const DentistDashboardHome = () => {
                 className="bg-green-600 text-white px-4 md:px-6 py-3 rounded-lg hover:bg-green-700 transition-colors text-center font-medium min-h-[44px] flex items-center justify-center"
               >
                 🦷 Start Treatment
-              </Link>
-              <Link
-                to="/dentist/search"
-                className="bg-blue-600 text-white px-4 md:px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors text-center font-medium min-h-[44px] flex items-center justify-center"
-              >
-                🔍 Search Patient
               </Link>
             </div>
           </div>

@@ -130,7 +130,7 @@ export const formatDate = (date, format = "short") => {
       "en-US",
       options[format] || options.short
     );
-  } catch (error) {
+  } catch {
     return "Invalid Date";
   }
 };

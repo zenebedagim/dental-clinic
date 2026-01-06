@@ -198,7 +198,8 @@ export const DIAGNOSES = [
     code: "REV_PULP",
     name: "Reversible pulpitis",
     category: "Dental Caries",
-    description: "Early pulp inflammation, pain goes away when stimulus is removed",
+    description:
+      "Early pulp inflammation, pain goes away when stimulus is removed",
   },
   {
     code: "IRREV_PULP",
@@ -410,188 +411,83 @@ export const DIAGNOSES = [
   },
 ];
 
-// DENTAL PROCEDURES - ADA Codes (D0120, D2140, etc.)
+// DENTAL PROCEDURES
 export const DENTAL_PROCEDURES = [
-  // Diagnostic Procedures
-  { code: "D0120", name: "Periodic oral evaluation", category: "Diagnostic" },
-  { code: "D0140", name: "Limited oral evaluation", category: "Diagnostic" },
   {
-    code: "D0150",
-    name: "Comprehensive oral evaluation",
+    name: "Oral Examination (Comprehensive Oral Exam)",
     category: "Diagnostic",
   },
   {
-    code: "D0160",
-    name: "Detailed and extensive oral evaluation",
-    category: "Diagnostic",
+    name: "Extraction",
+    category: "Oral Surgery",
   },
-
-  // Preventive Procedures
   {
-    code: "D1110",
-    name: "Adult prophylaxis (cleaning)",
+    name: "Scaling (Prophylaxis / Cleaning)",
     category: "Preventive",
   },
-  { code: "D1120", name: "Child prophylaxis", category: "Preventive" },
-  { code: "D1206", name: "Topical fluoride treatment", category: "Preventive" },
-  { code: "D1351", name: "Sealant - per tooth", category: "Preventive" },
-
-  // Restorative - Amalgam
   {
-    code: "D2140",
-    name: "Amalgam restoration - one surface, primary",
-    category: "Restorative",
-  },
-  {
-    code: "D2150",
-    name: "Amalgam restoration - two surfaces, primary",
-    category: "Restorative",
-  },
-  {
-    code: "D2160",
-    name: "Amalgam restoration - three surfaces, primary",
-    category: "Restorative",
-  },
-  {
-    code: "D2161",
-    name: "Amalgam restoration - four or more surfaces, primary",
-    category: "Restorative",
-  },
-  {
-    code: "D2330",
-    name: "Resin-based composite - one surface, anterior",
-    category: "Restorative",
-  },
-  {
-    code: "D2331",
-    name: "Resin-based composite - two surfaces, anterior",
-    category: "Restorative",
-  },
-  {
-    code: "D2332",
-    name: "Resin-based composite - three surfaces, anterior",
-    category: "Restorative",
-  },
-  {
-    code: "D2335",
-    name: "Resin-based composite - four or more surfaces, anterior",
-    category: "Restorative",
-  },
-  {
-    code: "D2391",
-    name: "Resin-based composite - one surface, posterior",
-    category: "Restorative",
-  },
-  {
-    code: "D2392",
-    name: "Resin-based composite - two surfaces, posterior",
-    category: "Restorative",
-  },
-  {
-    code: "D2393",
-    name: "Resin-based composite - three surfaces, posterior",
-    category: "Restorative",
-  },
-  {
-    code: "D2394",
-    name: "Resin-based composite - four or more surfaces, posterior",
-    category: "Restorative",
-  },
-
-  // Crowns
-  {
-    code: "D2710",
-    name: "Crown - resin with metal",
-    category: "Prosthodontics",
-  },
-  {
-    code: "D2720",
-    name: "Crown - resin with high noble metal",
-    category: "Prosthodontics",
-  },
-  {
-    code: "D2740",
-    name: "Crown - porcelain/ceramic substrate",
-    category: "Prosthodontics",
-  },
-  {
-    code: "D2750",
-    name: "Crown - porcelain fused to high noble metal",
-    category: "Prosthodontics",
-  },
-
-  // Endodontic
-  {
-    code: "D3310",
-    name: "Endodontic therapy, anterior",
-    category: "Endodontic",
-  },
-  {
-    code: "D3320",
-    name: "Endodontic therapy, bicuspid",
-    category: "Endodontic",
-  },
-  { code: "D3330", name: "Endodontic therapy, molar", category: "Endodontic" },
-  {
-    code: "D3346",
-    name: "Retreatment of previous root canal therapy - anterior",
-    category: "Endodontic",
-  },
-  {
-    code: "D3347",
-    name: "Retreatment of previous root canal therapy - bicuspid",
-    category: "Endodontic",
-  },
-  {
-    code: "D3348",
-    name: "Retreatment of previous root canal therapy - molar",
-    category: "Endodontic",
-  },
-
-  // Periodontics
-  {
-    code: "D4341",
-    name: "Scaling and root planing - per quadrant",
+    name: "Scaling and Root Planing (Deep Cleaning)",
     category: "Periodontics",
   },
   {
-    code: "D4342",
-    name: "Scaling and root planing - per quadrant",
+    name: "Restoration with Composite (Composite Filling)",
+    category: "Restorative",
+  },
+  {
+    name: "Restoration with Glass Ionomer (GI Filling)",
+    category: "Restorative",
+  },
+  {
+    name: "Temporary Filling",
+    category: "Restorative",
+  },
+  {
+    name: "Disimpaction / Impacted Tooth Removal",
+    category: "Oral Surgery",
+  },
+  {
+    name: "Dental Implant Placement",
+    category: "Prosthodontics",
+  },
+  {
+    name: "Metal-Ceramic Bridge",
+    category: "Prosthodontics",
+  },
+  {
+    name: "Zirconia Bridge",
+    category: "Prosthodontics",
+  },
+  {
+    name: "Jacket Crown (All-Ceramic Crown)",
+    category: "Prosthodontics",
+  },
+  {
+    name: "Jacket Crown (Zirconia Crown)",
+    category: "Prosthodontics",
+  },
+  {
+    name: "Splinting (Tooth Splinting)",
     category: "Periodontics",
   },
-
-  // Oral Surgery
   {
-    code: "D7140",
-    name: "Extraction, erupted tooth",
-    category: "Oral Surgery",
+    name: "Fixed Orthodontic Treatment – Upper Arch",
+    category: "Orthodontics",
   },
   {
-    code: "D7210",
-    name: "Extraction, erupted tooth requiring removal of bone",
-    category: "Oral Surgery",
+    name: "Fixed Orthodontic Treatment – Lower Arch",
+    category: "Orthodontics",
   },
   {
-    code: "D7240",
-    name: "Removal of impacted tooth - soft tissue",
-    category: "Oral Surgery",
+    name: "Fixed Orthodontic Treatment – Both Arches",
+    category: "Orthodontics",
   },
   {
-    code: "D7241",
-    name: "Removal of impacted tooth - partially bony",
-    category: "Oral Surgery",
+    name: "Invisalign (Clear Aligner Orthodontics)",
+    category: "Orthodontics",
   },
   {
-    code: "D7242",
-    name: "Removal of impacted tooth - completely bony",
+    name: "Intermaxillary Fixation (Jaw Immobilization / IMF)",
     category: "Oral Surgery",
-  },
-
-  // Other
-  {
-    code: "D9110",
-    name: "Palliative treatment of dental pain",
-    category: "Emergency",
   },
 ];
 
@@ -804,9 +700,7 @@ export const XRAY_TYPES = [
 ];
 
 // X-RAY CATEGORIES
-export const XRAY_CATEGORIES = [
-  ...new Set(XRAY_TYPES.map((x) => x.category)),
-];
+export const XRAY_CATEGORIES = [...new Set(XRAY_TYPES.map((x) => x.category))];
 
 // TOOTH SURFACES
 export const TOOTH_SURFACES = [

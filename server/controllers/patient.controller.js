@@ -38,7 +38,7 @@ const getAllPatients = async (req, res) => {
     console.log("=== getAllPatients Request ===");
     console.log("Query params:", JSON.stringify(req.query, null, 2));
     console.log("User role:", req.user?.role);
-    
+
     const {
       name,
       phone,
@@ -50,12 +50,18 @@ const getAllPatients = async (req, res) => {
       branchId,
       limit,
       offset,
+      xrayOnly, // New parameter: filter to only patients with X-Ray appointments
     } = req.query;
-    const { role } = req.user;
+    const { role, id: userId } = req.user;
 
     // Parse limit and offset with defaults
-    const limitNum = limit ? parseInt(limit, 10) : 1000;
+    // Reduced default limit from 1000 to 100 for better performance
+    const limitNum = limit ? parseInt(limit, 10) : 100;
     const offsetNum = offset ? parseInt(offset, 10) : 0;
+
+    // Cap maximum limit to prevent performance issues
+    const maxLimit = 500;
+    const finalLimit = limitNum > maxLimit ? maxLimit : limitNum;
 
     const where = {};
     if (name) {
@@ -102,9 +108,42 @@ const getAllPatients = async (req, res) => {
       }
     }
 
-    // Filter by branchId if provided (for dentists/reception to see patients from their branch)
-    // If branchId is provided, only return patients who have appointments in that branch
-    if (branchId) {
+    // For XRAY role: filter to only patients with X-Ray appointments/results
+    // If xrayOnly is true or user is XRAY role, only show patients with X-Ray related appointments
+    if (xrayOnly === "true" || role === "XRAY") {
+      // Build conditions for appointments with X-Ray requests or results
+      const appointmentConditions = {
+        OR: [
+          // Appointments assigned to this X-Ray doctor (if XRAY role)
+          ...(role === "XRAY"
+            ? [
+                {
+                  xrayId: userId,
+                  ...(branchId ? { branchId: branchId } : {}),
+                },
+              ]
+            : [
+                {
+                  xrayId: { not: null },
+                  ...(branchId ? { branchId: branchId } : {}),
+                },
+              ]),
+          // Appointments with X-Ray results
+          {
+            xrayResult: {
+              isNot: null,
+            },
+            ...(branchId ? { branchId: branchId } : {}),
+          },
+        ],
+      };
+
+      // Filter patients who have appointments matching the conditions
+      where.appointments = {
+        some: appointmentConditions,
+      };
+    } else if (branchId) {
+      // For non-XRAY roles, filter by branchId if provided
       where.appointments = {
         some: {
           branchId: branchId,
@@ -117,7 +156,7 @@ const getAllPatients = async (req, res) => {
       prisma.patient.findMany({
         where,
         skip: offsetNum,
-        take: limitNum,
+        take: finalLimit,
         orderBy: { name: "asc" },
         select: {
           id: true,
@@ -168,21 +207,49 @@ const normalizePhoneForSearch = (phone) => {
  */
 const searchPatients = async (req, res) => {
   try {
-    const { name, phone, limit = 20 } = req.query;
+    const { name, phone, cardNo, limit = 20, branchId } = req.query;
+    const { role, id: userId } = req.user;
 
-    console.log("Patient search request:", { name, phone, limit });
+    console.log("Patient search request:", {
+      name,
+      phone,
+      cardNo,
+      limit,
+      branchId,
+    });
 
     // Build OR conditions for name and phone
     const orConditions = [];
 
-    // Search by name
+    // Search by name - support multi-word search
     if (name && name.trim().length >= 2) {
+      const nameQuery = name.trim();
+      const nameWords = nameQuery
+        .split(/\s+/)
+        .filter((word) => word.length > 0);
+
+      // Always add full string search
       orConditions.push({
         name: {
-          contains: name.trim(),
+          contains: nameQuery,
           mode: "insensitive",
         },
       });
+
+      // For multi-word queries, also search for names containing all words individually
+      // This handles cases like "dagim zenbe" matching "Dagim Zenbe" or variations
+      if (nameWords.length > 1) {
+        const nameConditions = nameWords.map((word) => ({
+          name: {
+            contains: word,
+            mode: "insensitive",
+          },
+        }));
+        // Add AND condition: name must contain all words
+        orConditions.push({
+          AND: nameConditions,
+        });
+      }
     }
 
     // Search by phone - handle formatting variations
@@ -218,6 +285,18 @@ const searchPatients = async (req, res) => {
       orConditions.push(...phoneConditions);
     }
 
+    // Search by card number
+    if (cardNo && cardNo.trim().length >= 2) {
+      const cardNoQuery = cardNo.trim();
+      orConditions.push({
+        cardNo: {
+          not: null,
+          contains: cardNoQuery,
+          mode: "insensitive",
+        },
+      });
+    }
+
     // If no valid search terms, return empty
     if (orConditions.length === 0) {
       console.log("No valid search conditions");
@@ -226,11 +305,23 @@ const searchPatients = async (req, res) => {
 
     console.log("Search conditions:", JSON.stringify(orConditions, null, 2));
 
+    // Build where clause with search conditions
+    // For patient search, we search ALL patients regardless of branch
+    // This allows finding patients even if they don't have appointments yet
+    // Branch filtering is handled at the appointment level, not patient level
+    const where = {
+      OR: orConditions,
+    };
+
+    // Note: We don't filter by branchId in patient search because:
+    // 1. Patients can exist without appointments (new patients)
+    // 2. Patients can have appointments in multiple branches
+    // 3. Search should be comprehensive to find any patient
+    // Branch scoping is handled when viewing appointments, not when searching patients
+
     // Search by name OR phone number (or both if both provided)
     const patients = await prisma.patient.findMany({
-      where: {
-        OR: orConditions,
-      },
+      where,
       take: parseInt(limit),
       orderBy: { name: "asc" },
       select: {
@@ -246,6 +337,18 @@ const searchPatients = async (req, res) => {
     });
 
     console.log(`Found ${patients.length} patients`);
+    if (patients.length === 0 && name) {
+      // Debug: Check if patient exists with similar name
+      const debugPatients = await prisma.patient.findMany({
+        take: 5,
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      });
+      console.log(
+        "Sample patient names in DB:",
+        debugPatients.map((p) => p.name)
+      );
+    }
     return sendSuccess(res, patients);
   } catch (error) {
     console.error("Search patients error:", error);
@@ -278,7 +381,9 @@ const getPatientById = async (req, res) => {
                 name: true,
               },
             },
-            treatment: {
+            treatments: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
               select: {
                 id: true,
                 diagnosis: true,
@@ -303,7 +408,22 @@ const getPatientById = async (req, res) => {
       return sendError(res, "Patient not found", 404);
     }
 
-    return sendSuccess(res, patient);
+    // Transform treatments to treatment for backward compatibility
+    const transformedPatient = {
+      ...patient,
+      appointments: patient.appointments.map((appointment) => {
+        const transformed = { ...appointment };
+        if (transformed.treatments && Array.isArray(transformed.treatments)) {
+          transformed.treatment =
+            transformed.treatments.length > 0
+              ? transformed.treatments[0]
+              : null;
+        }
+        return transformed;
+      }),
+    };
+
+    return sendSuccess(res, transformedPatient);
   } catch (error) {
     console.error("Get patient by ID error:", error);
     return sendError(res, "Server error", 500, error);

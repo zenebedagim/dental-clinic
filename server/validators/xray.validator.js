@@ -62,6 +62,21 @@ const validateUploadXrayResult = [
  */
 const validateSendToDentist = [
   param("id").isUUID().withMessage("Invalid X-Ray result ID format"),
+  body("dentistId")
+    .optional()
+    .custom((value) => {
+      // If dentistId is provided, it must be a valid UUID
+      // If not provided (undefined, null, empty string), that's fine (optional)
+      if (value === undefined || value === null || value === "") {
+        return true; // Optional field, skip validation
+      }
+      // If provided, validate UUID format
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(String(value))) {
+        throw new Error("Invalid dentist ID format");
+      }
+      return true;
+    }),
 ];
 
 /**
@@ -76,53 +91,10 @@ const validateXrayResultId = [
  */
 const validateBranchIdQuery = [
   query("branchId").optional().isUUID().withMessage("Invalid branch ID format"),
-];
-
-/**
- * Validation rules for creating X-Ray share
- */
-const validateCreateXrayShare = [
-  param("xrayId").isUUID().withMessage("Invalid X-Ray ID format"),
-  body("password")
+  query("filter")
     .optional()
-    .trim()
-    .isLength({ min: 4, max: 50 })
-    .withMessage("Password must be between 4 and 50 characters"),
-  body("expiresAt")
-    .optional()
-    .isISO8601()
-    .withMessage("Invalid expiration date format. Use ISO 8601 format")
-    .custom((value) => {
-      const expiryDate = new Date(value);
-      const now = new Date();
-      if (expiryDate <= now) {
-        throw new Error("Expiration date must be in the future");
-      }
-      return true;
-    }),
-  body("maxViews")
-    .optional()
-    .isInt({ min: 1, max: 1000 })
-    .withMessage("Max views must be between 1 and 1000"),
-];
-
-/**
- * Validation rules for X-Ray share ID
- */
-const validateXrayShareId = [
-  param("shareId").isUUID().withMessage("Invalid share ID format"),
-];
-
-/**
- * Validation rules for share token
- */
-const validateShareToken = [
-  param("token")
-    .trim()
-    .notEmpty()
-    .withMessage("Share token is required")
-    .isLength({ min: 32, max: 64 })
-    .withMessage("Invalid share token format"),
+    .isIn(["pending", "completed", "all"])
+    .withMessage("Invalid filter. Must be 'pending', 'completed', or 'all'"),
 ];
 
 module.exports = {
@@ -130,8 +102,5 @@ module.exports = {
   validateSendToDentist,
   validateXrayResultId,
   validateBranchIdQuery,
-  validateCreateXrayShare,
-  validateXrayShareId,
-  validateShareToken,
 };
 

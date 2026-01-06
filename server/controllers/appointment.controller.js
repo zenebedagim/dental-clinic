@@ -1,258 +1,166 @@
 const prisma = require("../config/db");
-const { sendSuccess, sendError } = require("../utils/response.util");
+const fs = require("fs");
+const path = require("path");
+const {
+  sendSuccess,
+  sendError,
+  sendPaginatedSuccess,
+} = require("../utils/response.util");
+const { logSensitiveAction } = require("../middleware/auditLogger");
 
-const createAppointment = async (req, res) => {
+// Helper to log debug data
+const debugLog = (data) => {
   try {
-      const {
-      patientId,
-      patientName,
-      gender,
-      phoneNumber,
-      address,
-      cardNo,
-      branchId,
-      dentistId,
-      xrayId,
-      date,
-      visitReason,
-    } = req.body;
+    // Get project root: go up from server/controllers to project root
+    const projectRoot = path.resolve(__dirname, "../..");
+    const logPath = path.join(projectRoot, ".cursor", "debug.log");
+    const logEntry = JSON.stringify(data) + "\n";
+    fs.appendFileSync(logPath, logEntry, "utf8");
+  } catch (err) {
+    // Log to console as fallback
+    console.error("Debug log error:", err.message, "Path attempted:", path.resolve(__dirname, "../..", ".cursor", "debug.log"));
+  }
+};
 
-    // Require either patientId or patientName for backward compatibility
-    if (!patientId && !patientName) {
-      return sendError(res, "Patient ID or patient name is required", 400);
+// Helper function to transform appointments for backward compatibility
+const transformAppointmentsForBackwardCompatibility = (appointments) => {
+  return appointments.map((apt) => {
+    const transformed = { ...apt };
+    // Add backward compatibility fields if needed
+    if (apt.treatments && apt.treatments.length > 0) {
+      transformed.treatment = apt.treatments[0];
+    }
+    return transformed;
+  });
+};
+
+// Create appointment
+const createAppointment = async (req, res) => {
+  // #region agent log
+  debugLog({
+    location: "appointment.controller.js:22",
+    message: "createAppointment entry",
+    data: {
+      requestBody: req.body,
+      hasPatientId: !!req.body.patientId,
+      userRole: req.user?.role,
+    },
+    timestamp: Date.now(),
+    sessionId: "debug-session",
+    runId: "run1",
+    hypothesisId: "H1",
+  });
+  // #endregion
+  try {
+    const { id: userId, branchId, role } = req.user;
+    const { patientId, patientName, dentistId, xrayId, date, visitReason } =
+      req.body;
+
+    // #region agent log
+    debugLog({
+      location: "appointment.controller.js:29",
+      message: "extracted appointment data",
+      data: {
+        patientId,
+        hasPatientId: !!patientId,
+        dentistId,
+        hasDentistId: !!dentistId,
+        date,
+        hasDate: !!date,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
+
+    // Validate required fields
+    if (!patientId) {
+      // #region agent log
+      debugLog({
+        location: "appointment.controller.js:30",
+        message: "validation error - no patientId",
+        data: { requestBody: req.body },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H1",
+      });
+      // #endregion
+      return sendError(res, "Patient ID is required", 400);
     }
 
-    if (!branchId || !dentistId || !date) {
-      return sendError(res, "Branch, dentist, and date are required", 400);
+    if (!dentistId || !date) {
+      return sendError(res, "Dentist and date are required", 400);
     }
 
-    // Validate branch exists and is active
-    const branch = await prisma.branch.findUnique({
-      where: { id: branchId },
+    // Verify patient exists
+    const patient = await prisma.patient.findUnique({
+      where: { id: patientId },
     });
 
-    if (!branch) {
-      return sendError(res, "Branch not found", 404);
+    if (!patient) {
+      return sendError(res, "Patient not found", 404);
     }
 
-    // Validate dentist exists and check if they belong to the selected branch
+    // Use patient name from database if not provided
+    const finalPatientName = patientName || patient.name;
+
+    // Verify dentist exists and is in the same branch (if not admin)
     const dentist = await prisma.user.findUnique({
       where: { id: dentistId },
-      select: {
-        id: true,
-        name: true,
-        role: true,
-        branchId: true,
-      },
     });
 
-    if (!dentist) {
-      return sendError(res, "Dentist not found", 404);
+    if (!dentist || dentist.role !== "DENTIST") {
+      return sendError(res, "Invalid dentist", 400);
     }
 
-    if (dentist.role !== "DENTIST") {
-      return sendError(res, "Selected user is not a dentist", 400);
+    if (role !== "ADMIN" && dentist.branchId !== branchId) {
+      return sendError(res, "Dentist must be in your branch", 403);
     }
 
-    // Validate dentist belongs to the selected branch
-    if (dentist.branchId !== branchId) {
-      return sendError(
-        res,
-        "Selected dentist does not belong to the selected branch",
-        400
-      );
-    }
-
-    // Check doctor availability (if schedule system is being used)
-    try {
-      const appointmentDate = new Date(date);
-      const dayOfWeek = appointmentDate.getDay();
-      const dateStart = new Date(appointmentDate);
-      dateStart.setHours(0, 0, 0, 0);
-      const dateEnd = new Date(dateStart);
-      dateEnd.setDate(dateEnd.getDate() + 1);
-
-      // Get schedule for this day
-      const schedule = await prisma.doctorSchedule
-        .findUnique({
-          where: {
-            doctorId_branchId_dayOfWeek: {
-              doctorId: dentistId,
-              branchId: branchId,
-              dayOfWeek: dayOfWeek,
-            },
-          },
-        })
-        .catch(() => null);
-
-      // Check for availability override
-      const availabilityOverride = await prisma.doctorAvailability
-        .findFirst({
-          where: {
-            doctorId: dentistId,
-            date: {
-              gte: dateStart,
-              lt: dateEnd,
-            },
-          },
-        })
-        .catch(() => null);
-
-      // Check if blocked
-      if (availabilityOverride && !availabilityOverride.isAvailable) {
-        return sendError(
-          res,
-          `Doctor is not available on this date. Reason: ${
-            availabilityOverride.reason || "Not specified"
-          }`,
-          400
-        );
-      }
-
-      // Check if no schedule exists but availability override allows it
-      if (!schedule && !availabilityOverride) {
-        // Warning: Doctor has no schedule set, but we'll allow it for backward compatibility
-        console.warn(
-          `Doctor ${dentistId} has no schedule set for day ${dayOfWeek}`
-        );
-      } else if (schedule && !schedule.isAvailable) {
-        return sendError(
-          res,
-          "Doctor is not available on this day of the week",
-          400
-        );
-      }
-
-      // Check for conflicting appointments
-      const appointmentEndTime = new Date(
-        appointmentDate.getTime() + 60 * 60 * 1000
-      ); // Default 1 hour duration
-      const conflictingAppointments = await prisma.appointment
-        .findFirst({
-          where: {
-            dentistId: dentistId,
-            branchId: branchId,
-            date: {
-              gte: appointmentDate,
-              lt: appointmentEndTime,
-            },
-            status: {
-              not: "COMPLETED",
-            },
-          },
-        })
-        .catch(() => null);
-
-      if (conflictingAppointments) {
-        return sendError(
-          res,
-          "Doctor already has an appointment at this time",
-          400
-        );
-      }
-    } catch (availabilityError) {
-      // If availability check fails, log but don't block appointment creation
-      // This allows backward compatibility if schedules aren't set up yet
-      console.warn(
-        "Availability check failed, allowing appointment:",
-        availabilityError.message
-      );
-    }
-
-    // Handle patient creation/retrieval
-    let finalPatientName = patientName;
-    let finalPatientId = patientId || null;
-
-    if (patientId) {
-      // Existing patient - fetch patient name
-      const patient = await prisma.patient.findUnique({
-        where: { id: patientId },
-        select: { name: true },
+    // Verify xray user if provided
+    if (xrayId) {
+      const xray = await prisma.user.findUnique({
+        where: { id: xrayId },
       });
-
-      if (!patient) {
-        return sendError(res, "Patient not found", 404);
-      }
-
-      finalPatientName = patient.name;
-    } else if (patientName) {
-      // New patient - create patient record with provided details
-      // Check if patient already exists by phone number (if provided)
-      if (phoneNumber) {
-        const existingPatient = await prisma.patient.findFirst({
-          where: {
-            phone: phoneNumber,
-            name: {
-              equals: patientName,
-              mode: "insensitive",
-            },
-          },
-        });
-
-        if (existingPatient) {
-          // Use existing patient
-          finalPatientId = existingPatient.id;
-          finalPatientName = existingPatient.name;
-        } else {
-          // Create new patient
-          const newPatient = await prisma.patient.create({
-            data: {
-              name: patientName,
-              phone: phoneNumber || null,
-              email: null, // Can be added later
-              gender: gender || null,
-              address: address || null,
-              cardNo: req.body.cardNo || null,
-            },
-          });
-          finalPatientId = newPatient.id;
-          finalPatientName = newPatient.name;
-        }
-      } else {
-        // No phone number - create new patient without duplicate check
-        const newPatient = await prisma.patient.create({
-          data: {
-            name: patientName,
-            phone: null,
-            email: null,
-            gender: gender || null,
-            address: address || null,
-            cardNo: req.body.cardNo || null,
-          },
-        });
-        finalPatientId = newPatient.id;
-        finalPatientName = newPatient.name;
+      if (!xray || xray.role !== "XRAY") {
+        return sendError(res, "Invalid X-Ray doctor", 400);
       }
     }
 
-    // Set receptionistId if the user creating the appointment is a receptionist
-    const receptionistId = req.user.role === "RECEPTION" ? req.user.id : null;
+    // #region agent log
+    debugLog({
+      location: "appointment.controller.js:72",
+      message: "before creating appointment",
+      data: {
+        patientId,
+        dentistId,
+        branchId: role === "ADMIN" ? dentist.branchId : branchId,
+        date,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
 
     const appointment = await prisma.appointment.create({
       data: {
-        patientId: finalPatientId,
-        patientName: finalPatientName,
-        branchId,
+        patientId, // REQUIRED - no longer nullable
+        patientName: finalPatientName, // Use patient name from database
+        branchId: role === "ADMIN" ? dentist.branchId : branchId,
         dentistId,
         xrayId: xrayId || null,
-        receptionistId: receptionistId,
+        receptionistId: role === "RECEPTION" ? userId : null,
         date: new Date(date),
-        status: "PENDING",
         visitReason: visitReason || null,
+        status: "PENDING",
       },
       include: {
-        patient: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            email: true,
-            gender: true,
-            dateOfBirth: true,
-            address: true,
-            cardNo: true,
-          },
-        },
+        patient: true,
         branch: true,
         dentist: {
           select: {
@@ -268,35 +176,36 @@ const createAppointment = async (req, res) => {
             email: true,
           },
         },
-        receptionist: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
       },
     });
 
-    // Notify assigned dentist about new appointment
-    try {
-      const notificationService = require('../services/notification.service');
-      const { NotificationType } = require('../utils/notificationTypes');
-      
-      await notificationService.notifyUser(appointment.dentistId, {
-        type: NotificationType.APPOINTMENT_CREATED,
-        title: 'New Appointment',
-        message: `New appointment scheduled for ${appointment.patientName} on ${new Date(appointment.date).toLocaleString()}`,
-        data: {
-          appointmentId: appointment.id,
-          patientName: appointment.patientName,
-          date: appointment.date,
-        },
-      });
-    } catch (notifError) {
-      console.error('Error sending appointment creation notification:', notifError);
-      // Don't fail the request if notification fails
-    }
+    // Log sensitive action (non-blocking - don't fail if logging fails)
+    logSensitiveAction(req, "CREATE_APPOINTMENT", {
+      appointmentId: appointment.id,
+      patientId: appointment.patientId,
+      patientName: finalPatientName,
+      dentistId: appointment.dentistId,
+      branchId: appointment.branchId,
+      date: appointment.date,
+    }).catch((logError) => {
+      console.error("Error logging create appointment action:", logError);
+    });
+
+    // #region agent log
+    debugLog({
+      location: "appointment.controller.js:194",
+      message: "appointment created successfully",
+      data: {
+        appointmentId: appointment.id,
+        patientId: appointment.patientId,
+        status: appointment.status,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
 
     return sendSuccess(
       res,
@@ -305,75 +214,82 @@ const createAppointment = async (req, res) => {
       "Appointment created successfully"
     );
   } catch (error) {
+    // #region agent log
+    debugLog({
+      location: "appointment.controller.js:200",
+      message: "appointment creation error",
+      data: {
+        errorMessage: error.message,
+        errorName: error.name,
+        requestBody: req.body,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
     console.error("Create appointment error:", error);
     return sendError(res, "Server error", 500, error);
   }
 };
 
+// Get reception appointments
 const getReceptionAppointments = async (req, res) => {
   try {
-    console.log("=== getReceptionAppointments Request ===");
-    console.log("Query params:", JSON.stringify(req.query, null, 2));
-    console.log("User branchId:", req.user?.branchId);
-    
+    const { branchId: userBranchId, role } = req.user;
+
+    if (!req.user) {
+      return sendError(res, "Unauthorized", 401);
+    }
+
     const {
-      branchId: selectedBranchId,
+      branchId: queryBranchId,
       startDate,
       endDate,
       status,
       dentistId,
       patientName,
-      patientPhone,
-      limit,
-      skip,
+      limit = 100,
+      skip = 0,
     } = req.query;
-    const branchId = selectedBranchId || req.user.branchId;
 
-    if (!branchId) {
-      return sendError(res, "Branch ID is required", 400);
+    // For ADMIN: use branchId from query params if provided, otherwise no filter
+    // For RECEPTION: use their own branchId (ignore query param for security)
+    let branchId;
+    if (role === "ADMIN") {
+      branchId = queryBranchId; // ADMIN must provide branchId in query params
+    } else {
+      branchId = userBranchId; // RECEPTION users can only see their own branch
     }
 
-    // Build date filter - only apply if dates are provided (show all by default)
-    let dateFilter = {};
+    const where = {};
+    if (branchId) {
+      where.branchId = branchId;
+    } else if (role === "ADMIN") {
+      // ADMIN must provide branchId - return empty if not provided
+      return sendSuccess(res, []);
+    } else if (role === "RECEPTION" && !branchId) {
+      // RECEPTION must have a branchId - return error if missing
+      return sendError(res, "Branch ID is required for reception users", 400);
+    }
+
     if (startDate && endDate) {
       const start = new Date(startDate);
       start.setHours(0, 0, 0, 0);
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        date: {
-          gte: start,
-          lte: end,
-        },
-      };
-    } else if (startDate) {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      dateFilter = {
-        date: {
-          gte: start,
-        },
-      };
+      where.date = { gte: start, lte: end };
     }
-    // No default date filter - show all appointments by default
 
-    // Build where clause - Receptionists see ALL appointments in their branch
-    const where = {
-      branchId, // Only filter by branch - show all appointments in this branch
-      ...dateFilter,
-    };
-
-    // Add status filter if provided
-    if (status && status !== "ALL") {
+    if (status) {
       where.status = status;
     }
 
-    // Add dentist filter if provided
     if (dentistId) {
       where.dentistId = dentistId;
     }
 
-    // Add patient name filter if provided
     if (patientName) {
       where.patientName = {
         contains: patientName,
@@ -381,152 +297,172 @@ const getReceptionAppointments = async (req, res) => {
       };
     }
 
-    // Add patient phone filter if provided (filter by patient relation)
-    if (patientPhone) {
-      where.patient = {
-        phone: {
-          contains: patientPhone,
-        },
-      };
+    // Get total count for pagination
+    let total = 0;
+    try {
+      total = await prisma.appointment.count({ where });
+    } catch (countError) {
+      console.error("Error counting appointments:", countError);
+      // If count fails, still try to fetch appointments
+      total = 0;
     }
 
-    // Parse pagination parameters for slow network optimization
-    // Default limit to prevent loading too much data at once
-    const take = limit ? parseInt(limit, 10) : 100;
-    const skipValue = skip ? parseInt(skip, 10) : undefined;
+    // Calculate pagination
+    const pageSize = parseInt(limit) || 20;
+    const skipValue = parseInt(skip) || 0;
+    const page = Math.floor(skipValue / pageSize) + 1;
 
-    const appointments = await prisma.appointment.findMany({
-      where,
-      take, // Limit results for pagination (default 100)
-      skip: skipValue, // Skip results for pagination
-      orderBy: { date: "desc" }, // Most recent first
-      include: {
-        patient: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            email: true,
-            gender: true,
-            dateOfBirth: true,
-            address: true,
-            cardNo: true,
+    // Get all unique patient names from appointments without patient relation
+    // Wrap in try-catch to prevent errors from breaking the main query
+    let appointmentsWithoutPatient = [];
+    try {
+      appointmentsWithoutPatient = await prisma.appointment.findMany({
+        where: {
+          ...where,
+          patientId: null,
+        },
+        select: {
+          patientName: true,
+        },
+        distinct: ["patientName"],
+      });
+    } catch (patientQueryError) {
+      console.error(
+        "Error fetching appointments without patient:",
+        patientQueryError
+      );
+      // Continue without patient lookup - not critical
+      appointmentsWithoutPatient = [];
+    }
+
+    // Batch fetch patients by name (fix N+1 query)
+    const patientNames = appointmentsWithoutPatient
+      .map((apt) => apt.patientName)
+      .filter(Boolean);
+    const patientsByName = {};
+    if (patientNames.length > 0) {
+      const foundPatients = await prisma.patient.findMany({
+        where: {
+          name: {
+            in: patientNames,
+            mode: "insensitive",
           },
         },
-        branch: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          email: true,
+          cardNo: true,
+          dateOfBirth: true,
+          gender: true,
+          address: true,
+        },
+      });
+
+      // Create lookup map
+      foundPatients.forEach((patient) => {
+        patientsByName[patient.name.toLowerCase()] = patient;
+      });
+    }
+
+    // Validate pagination values
+    if (isNaN(pageSize) || pageSize < 1) {
+      return sendError(res, "Invalid page size", 400);
+    }
+    if (isNaN(skipValue) || skipValue < 0) {
+      return sendError(res, "Invalid skip value", 400);
+    }
+
+    let appointments = [];
+    try {
+      appointments = await prisma.appointment.findMany({
+        where,
+        include: {
+          patient: true,
+          dentist: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          xray: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
           },
         },
-        dentist: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        xray: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        receptionist: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        // Optimize treatment include - only fetch necessary fields
-        treatment: {
-          select: {
-            id: true,
-            totalCost: true,
-          },
-        },
-        // Optimize xrayResult include - only fetch necessary fields
-        xrayResult: {
-          select: {
-            id: true,
-            xrayType: true,
-            findings: true,
-            createdAt: true,
-          },
-        },
-      },
+        orderBy: { date: "desc" },
+        take: pageSize,
+        skip: skipValue,
+      });
+    } catch (queryError) {
+      console.error("Error fetching appointments:", queryError);
+      console.error("Query where clause:", JSON.stringify(where, null, 2));
+      throw queryError; // Re-throw to be caught by outer try-catch
+    }
+
+    // Attach patient data for appointments without patient relation
+    const appointmentsWithPatientData = appointments.map((apt) => {
+      if (apt.patient) {
+        return apt;
+      }
+
+      // If no patient relation but we have patientName, use lookup map
+      if (apt.patientName) {
+        const foundPatient =
+          patientsByName[apt.patientName.toLowerCase()] || null;
+        if (foundPatient) {
+          apt.patient = foundPatient;
+        }
+      }
+
+      return apt;
     });
 
-    console.log("=== getReceptionAppointments Success ===");
-    console.log(`Returning ${appointments.length} appointments`);
-    
-    console.log("=== getReceptionAppointments Success ===");
-    console.log(`Returning ${appointments.length} appointments`);
-    
-    return sendSuccess(res, appointments);
+    return sendPaginatedSuccess(
+      res,
+      appointmentsWithPatientData,
+      { total, page, pageSize },
+      200,
+      "Appointments retrieved successfully"
+    );
   } catch (error) {
-    console.error("=== getReceptionAppointments Error ===");
-    console.error("Error details:", error);
-    console.error("Error message:", error.message);
+    console.error("Get reception appointments error:", error);
     console.error("Error stack:", error.stack);
-    if (error.code) {
-      console.error("Error code:", error.code);
-    }
-    if (error.meta) {
-      console.error("Error meta:", error.meta);
-    }
-    return sendError(res, `Server error: ${error.message}`, 500, {
+    console.error("Error details:", {
       message: error.message,
       code: error.code,
-      meta: error.meta
+      meta: error.meta,
     });
+    return sendError(
+      res,
+      error.message || "Server error",
+      500,
+      process.env.NODE_ENV === "development" ? error : null
+    );
   }
 };
 
+// Get dentist appointments
 const getDentistAppointments = async (req, res) => {
   try {
-    const { id: dentistId } = req.user;
-    const { branchId: selectedBranchId } = req.query;
+    const { id: userId } = req.user;
+    const { branchId } = req.query;
 
-    // Require branchId - dentists work within branches
-    const branchId = selectedBranchId || req.user.branchId;
-
-    if (!branchId) {
-      return sendError(res, "Branch ID is required", 400);
+    const where = { dentistId: userId };
+    if (branchId) {
+      where.branchId = branchId;
     }
-
-    // Filter by branch first, then by dentist - ensures dentists see their appointments in the selected branch
-    const where = {
-      branchId,
-      dentistId,
-    };
 
     const appointments = await prisma.appointment.findMany({
       where,
       include: {
-        patient: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            email: true,
-            gender: true,
-            dateOfBirth: true,
-            address: true,
-            cardNo: true,
-          },
-        },
+        patient: true,
         branch: true,
-        dentist: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
         xray: {
           select: {
             id: true,
@@ -534,40 +470,40 @@ const getDentistAppointments = async (req, res) => {
             email: true,
           },
         },
-        treatment: true,
-        xrayResult: true,
+        xrayResult: true, // Include X-ray result with sentToDentist flag
+        treatments: {
+          orderBy: { createdAt: "desc" },
+        },
       },
       orderBy: { date: "desc" },
     });
 
-    return sendSuccess(res, appointments);
+    // Apply backward compatibility transformation
+    const transformedAppointments =
+      transformAppointmentsForBackwardCompatibility(appointments);
+
+    return sendSuccess(res, transformedAppointments);
   } catch (error) {
     console.error("Get dentist appointments error:", error);
     return sendError(res, "Server error", 500, error);
   }
 };
 
+// Get X-ray appointments
 const getXrayAppointments = async (req, res) => {
   try {
-    const { id: xrayId } = req.user;
-    const { branchId: selectedBranchId } = req.query;
+    const { id: userId } = req.user;
+    const { branchId } = req.query;
 
-    // Require branchId - XRAY doctors work within branches
-    const branchId = selectedBranchId || req.user.branchId;
-
-    if (!branchId) {
-      return sendError(res, "Branch ID is required", 400);
+    const where = { xrayId: userId };
+    if (branchId) {
+      where.branchId = branchId;
     }
-
-    // Filter by branch first, then by XRAY doctor - ensures XRAY doctors see their appointments in the selected branch
-    const where = {
-      branchId,
-      xrayId,
-    };
 
     const appointments = await prisma.appointment.findMany({
       where,
       include: {
+        patient: true,
         branch: true,
         dentist: {
           select: {
@@ -576,180 +512,84 @@ const getXrayAppointments = async (req, res) => {
             email: true,
           },
         },
-        xray: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        xrayResult: true,
       },
       orderBy: { date: "desc" },
     });
 
     return sendSuccess(res, appointments);
   } catch (error) {
-    console.error("Get xray appointments error:", error);
+    console.error("Get X-ray appointments error:", error);
     return sendError(res, "Server error", 500, error);
   }
 };
 
-/**
- * Update appointment
- */
+// Update appointment
 const updateAppointment = async (req, res) => {
   try {
+    const { id: userId, role, branchId } = req.user;
     const { id } = req.params;
-    const { date, dentistId, xrayId, status, visitReason } = req.body;
-    const { id: userId, role } = req.user;
+    const { date, status, visitReason, xrayId, patientId, patientName } =
+      req.body;
 
-    // Check if appointment exists
     const appointment = await prisma.appointment.findUnique({
       where: { id },
-      include: {
-        branch: true,
-        dentist: true,
-      },
     });
 
     if (!appointment) {
       return sendError(res, "Appointment not found", 404);
     }
 
-    // Build update data
-    const updateData = {};
-    if (date) {
-      const appointmentDate = new Date(date);
-
-      // Check for conflicts if date is being changed
-      if (appointment.date.getTime() !== appointmentDate.getTime()) {
-        const appointmentEndTime = new Date(
-          appointmentDate.getTime() + 60 * 60 * 1000
-        ); // Default 1 hour duration
-
-        const conflictingAppointments = await prisma.appointment.findFirst({
-          where: {
-            id: { not: id }, // Exclude current appointment
-            dentistId: dentistId || appointment.dentistId,
-            branchId: appointment.branchId,
-            date: {
-              gte: appointmentDate,
-              lt: appointmentEndTime,
-            },
-            status: {
-              not: "COMPLETED",
-            },
-          },
-        });
-
-        if (conflictingAppointments) {
-          return sendError(
-            res,
-            "Doctor already has an appointment at this time",
-            400
-          );
-        }
-
-        // Check doctor availability
-        const dayOfWeek = appointmentDate.getDay();
-        const dateStart = new Date(appointmentDate);
-        dateStart.setHours(0, 0, 0, 0);
-        const dateEnd = new Date(dateStart);
-        dateEnd.setDate(dateEnd.getDate() + 1);
-
-        const schedule = await prisma.doctorSchedule
-          .findUnique({
-            where: {
-              doctorId_branchId_dayOfWeek: {
-                doctorId: dentistId || appointment.dentistId,
-                branchId: appointment.branchId,
-                dayOfWeek: dayOfWeek,
-              },
-            },
-          })
-          .catch(() => null);
-
-        const availabilityOverride = await prisma.doctorAvailability
-          .findFirst({
-            where: {
-              doctorId: dentistId || appointment.dentistId,
-              date: {
-                gte: dateStart,
-                lt: dateEnd,
-              },
-            },
-          })
-          .catch(() => null);
-
-        if (availabilityOverride && !availabilityOverride.isAvailable) {
-          return sendError(
-            res,
-            `Doctor is not available on this date. Reason: ${
-              availabilityOverride.reason || "Not specified"
-            }`,
-            400
-          );
-        }
-
-        if (schedule && !schedule.isAvailable) {
-          return sendError(
-            res,
-            "Doctor is not available on this day of the week",
-            400
-          );
-        }
-      }
-
-      updateData.date = appointmentDate;
+    // Check permissions
+    if (role === "RECEPTION" && appointment.branchId !== branchId) {
+      return sendError(
+        res,
+        "You can only update appointments in your branch",
+        403
+      );
     }
-    if (dentistId) {
-      // Validate dentist exists and belongs to the appointment's branch
-      const dentist = await prisma.user.findUnique({
-        where: { id: dentistId },
-        select: {
-          id: true,
-          name: true,
-          role: true,
-          branchId: true,
-        },
-      });
 
-      if (!dentist) {
-        return sendError(res, "Dentist not found", 404);
-      }
+    if (role === "DENTIST" && appointment.dentistId !== userId) {
+      return sendError(res, "You can only update your own appointments", 403);
+    }
 
-      if (dentist.role !== "DENTIST") {
-        return sendError(res, "Selected user is not a dentist", 400);
-      }
+    const updateData = {};
+    if (date !== undefined) updateData.date = new Date(date);
+    if (status !== undefined) updateData.status = status;
+    if (visitReason !== undefined) updateData.visitReason = visitReason;
+    if (xrayId !== undefined) updateData.xrayId = xrayId || null;
 
-      // Validate dentist belongs to the appointment's branch
-      if (dentist.branchId !== appointment.branchId) {
+    // Handle patientId update - must be valid UUID and patient must exist
+    if (patientId !== undefined) {
+      if (!patientId) {
         return sendError(
           res,
-          "Selected dentist does not belong to this appointment's branch",
+          "Patient ID cannot be null. Every appointment must be linked to a patient.",
           400
         );
       }
 
-      updateData.dentistId = dentistId;
+      // Verify patient exists
+      const patient = await prisma.patient.findUnique({
+        where: { id: patientId },
+      });
+
+      if (!patient) {
+        return sendError(res, "Patient not found", 404);
+      }
+
+      updateData.patientId = patientId;
+      // Update patientName from patient record if not provided
+      updateData.patientName = patientName || patient.name;
+    } else if (patientName !== undefined) {
+      // If only patientName is provided, update it (but keep existing patientId)
+      updateData.patientName = patientName;
     }
-    if (xrayId !== undefined) updateData.xrayId = xrayId || null;
-    if (status) updateData.status = status;
-    if (visitReason !== undefined) updateData.visitReason = visitReason || null;
 
     const updatedAppointment = await prisma.appointment.update({
       where: { id },
       data: updateData,
       include: {
-        patient: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            email: true,
-          },
-        },
+        patient: true,
         branch: true,
         dentist: {
           select: {
@@ -765,78 +605,8 @@ const updateAppointment = async (req, res) => {
             email: true,
           },
         },
-        treatment: true,
-        xrayResult: true,
-        receptionist: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
       },
     });
-
-    // Send notifications based on what changed
-    try {
-      const notificationService = require('../services/notification.service');
-      const { NotificationType, NotificationPriority } = require('../utils/notificationTypes');
-      
-      // If status changed to CANCELLED, notify both dentist and reception
-      if (status === 'CANCELLED') {
-        await Promise.all([
-          notificationService.notifyUser(updatedAppointment.dentistId, {
-            type: NotificationType.APPOINTMENT_CANCELLED,
-            priority: NotificationPriority.CRITICAL,
-            title: 'Appointment Cancelled',
-            message: `Appointment for ${updatedAppointment.patientName} has been cancelled`,
-            data: {
-              appointmentId: updatedAppointment.id,
-              patientName: updatedAppointment.patientName,
-            },
-          }),
-          updatedAppointment.receptionistId && notificationService.notifyUser(updatedAppointment.receptionistId, {
-            type: NotificationType.APPOINTMENT_CANCELLED,
-            priority: NotificationPriority.CRITICAL,
-            title: 'Appointment Cancelled',
-            message: `Appointment for ${updatedAppointment.patientName} has been cancelled`,
-            data: {
-              appointmentId: updatedAppointment.id,
-              patientName: updatedAppointment.patientName,
-            },
-          }),
-        ]);
-      } else if (status) {
-        // Status changed (but not cancelled)
-        await notificationService.notifyUser(updatedAppointment.dentistId, {
-          type: NotificationType.APPOINTMENT_UPDATED,
-          title: 'Appointment Updated',
-          message: `Appointment for ${updatedAppointment.patientName} status changed to ${status}`,
-          data: {
-            appointmentId: updatedAppointment.id,
-            patientName: updatedAppointment.patientName,
-            status,
-          },
-        });
-        
-        // Also notify reception if status changed by dentist
-        if (updatedAppointment.receptionistId && req.user.role === 'DENTIST') {
-          await notificationService.notifyUser(updatedAppointment.receptionistId, {
-            type: NotificationType.APPOINTMENT_UPDATED,
-            title: 'Appointment Status Updated',
-            message: `Appointment for ${updatedAppointment.patientName} status changed to ${status}`,
-            data: {
-              appointmentId: updatedAppointment.id,
-              patientName: updatedAppointment.patientName,
-              status,
-            },
-          });
-        }
-      }
-    } catch (notifError) {
-      console.error('Error sending appointment update notification:', notifError);
-      // Don't fail the request if notification fails
-    }
 
     return sendSuccess(
       res,
@@ -850,63 +620,177 @@ const updateAppointment = async (req, res) => {
   }
 };
 
-/**
- * Get patient appointments with treatment sequence numbers (first, second, third, etc.)
- * Orders appointments by date (oldest first) and adds treatmentNumber to each
- */
+// Get patient appointments with sequence
 const getPatientAppointmentsWithSequence = async (req, res) => {
   try {
     const { patientId } = req.params;
-    const { branchId: selectedBranchId } = req.query;
-    const branchId = selectedBranchId || req.user.branchId;
 
-    if (!patientId) {
-      return sendError(res, "Patient ID is required", 400);
-    }
-
-    // Verify patient exists
-    const patient = await prisma.patient.findUnique({
-      where: { id: patientId },
-      select: { id: true, name: true },
+    const appointments = await prisma.appointment.findMany({
+      where: { patientId },
+      include: {
+        branch: true,
+        dentist: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        treatments: {
+          orderBy: { createdAt: "desc" },
+        },
+      },
+      orderBy: { date: "asc" },
     });
 
-    if (!patient) {
-      return sendError(res, "Patient not found", 404);
+    // Add sequence numbers
+    const appointmentsWithSequence = appointments.map((apt, index) => ({
+      ...apt,
+      sequence: index + 1,
+    }));
+
+    return sendSuccess(res, appointmentsWithSequence);
+  } catch (error) {
+    console.error("Get patient appointments with sequence error:", error);
+    return sendError(res, "Server error", 500, error);
+  }
+};
+
+// Get appointment statistics
+const getAppointmentStats = async (req, res) => {
+  try {
+    const { branchId: userBranchId, role } = req.user;
+    const { branchId: queryBranchId, startDate, endDate } = req.query;
+
+    // For ADMIN: use branchId from query params if provided
+    // For RECEPTION: use their own branchId
+    let branchId;
+    if (role === "ADMIN") {
+      branchId = queryBranchId;
+    } else {
+      branchId = userBranchId;
     }
 
-    // Build where clause
-    const where = {
-      patientId: patientId,
-    };
+    if (!branchId && role !== "ADMIN") {
+      return sendError(res, "Branch ID is required", 400);
+    }
 
-    // Filter by branch if provided
+    const where = {};
     if (branchId) {
       where.branchId = branchId;
     }
 
-    // Get all appointments for this patient, ordered by date (oldest first)
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      where.date = { gte: start, lte: end };
+    }
+
+    // Get all appointments for stats calculation
     const appointments = await prisma.appointment.findMany({
       where,
+      select: {
+        id: true,
+        date: true,
+        status: true,
+      },
+    });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const stats = {
+      total: appointments.length,
+      today: appointments.filter(
+        (apt) => new Date(apt.date) >= today && new Date(apt.date) < tomorrow
+      ).length,
+      pending: appointments.filter((apt) => apt.status === "PENDING").length,
+      completed: appointments.filter((apt) => apt.status === "COMPLETED")
+        .length,
+      cancelled: appointments.filter((apt) => apt.status === "CANCELLED")
+        .length,
+      inProgress: appointments.filter((apt) => apt.status === "IN_PROGRESS")
+        .length,
+      cancellationRate:
+        appointments.length > 0
+          ? (
+              (appointments.filter((apt) => apt.status === "CANCELLED").length /
+                appointments.length) *
+              100
+            ).toFixed(2)
+          : 0,
+    };
+
+    return sendSuccess(res, stats);
+  } catch (error) {
+    console.error("Get appointment stats error:", error);
+    return sendError(res, "Server error", 500, error);
+  }
+};
+
+// Reschedule appointment
+const rescheduleAppointment = async (req, res) => {
+  try {
+    const { id: appointmentId } = req.params;
+    const { date, time, reason } = req.body;
+    const { id: userId, role, branchId } = req.user;
+
+    if (!date || !time) {
+      return sendError(res, "Date and time are required", 400);
+    }
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+    });
+
+    if (!appointment) {
+      return sendError(res, "Appointment not found", 404);
+    }
+
+    // Check permissions
+    if (role === "RECEPTION" && appointment.branchId !== branchId) {
+      return sendError(
+        res,
+        "You can only reschedule appointments in your branch",
+        403
+      );
+    }
+
+    const newDateTime = new Date(`${date}T${time}`);
+
+    // Check for conflicts
+    const conflicts = await prisma.appointment.findMany({
+      where: {
+        id: { not: appointmentId },
+        dentistId: appointment.dentistId,
+        date: {
+          gte: new Date(newDateTime.getTime() - 60 * 60 * 1000), // 1 hour before
+          lte: new Date(newDateTime.getTime() + 60 * 60 * 1000), // 1 hour after
+        },
+        status: { not: "CANCELLED" },
+      },
+    });
+
+    if (conflicts.length > 0) {
+      return sendError(
+        res,
+        "Time slot conflicts with existing appointment",
+        409
+      );
+    }
+
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        date: newDateTime,
+        visitReason: reason || appointment.visitReason,
+      },
       include: {
-        patient: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            email: true,
-            gender: true,
-            dateOfBirth: true,
-            address: true,
-            cardNo: true,
-          },
-        },
-        branch: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-          },
-        },
+        patient: true,
+        branch: true,
         dentist: {
           select: {
             id: true,
@@ -914,78 +798,280 @@ const getPatientAppointmentsWithSequence = async (req, res) => {
             email: true,
           },
         },
-        xray: {
+      },
+    });
+
+    // Log sensitive action (non-blocking - don't fail if logging fails)
+    logSensitiveAction(req, "RESCHEDULE_APPOINTMENT", {
+      appointmentId: appointmentId,
+      oldDate: appointment.date,
+      newDate: newDateTime,
+      reason: reason,
+    }).catch((logError) => {
+      console.error("Error logging reschedule action:", logError);
+      // Don't throw - logging failure shouldn't break the request
+    });
+
+    return sendSuccess(
+      res,
+      updatedAppointment,
+      200,
+      "Appointment rescheduled successfully"
+    );
+  } catch (error) {
+    console.error("Reschedule appointment error:", error);
+    console.error("Error stack:", error.stack);
+    return sendError(
+      res,
+      error.message || "Server error",
+      500,
+      process.env.NODE_ENV === "development" ? error : null
+    );
+  }
+};
+
+// Check in patient
+const checkInAppointment = async (req, res) => {
+  try {
+    const { id: appointmentId } = req.params;
+    const { id: userId, role, branchId } = req.user;
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+    });
+
+    if (!appointment) {
+      return sendError(res, "Appointment not found", 404);
+    }
+
+    // Check permissions
+    if (role === "RECEPTION" && appointment.branchId !== branchId) {
+      return sendError(
+        res,
+        "You can only check in patients in your branch",
+        403
+      );
+    }
+
+    // Update appointment status to IN_PROGRESS
+    // Note: checkedInAt and checkedInBy fields don't exist in schema yet
+    // Using updatedAt to track when check-in occurred
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        status: "IN_PROGRESS",
+        // updatedAt will be automatically set by Prisma
+      },
+      include: {
+        patient: true,
+        branch: true,
+        dentist: {
           select: {
             id: true,
             name: true,
             email: true,
           },
         },
-        treatment: true,
-        xrayResult: true,
       },
-      orderBy: { date: "asc" }, // Oldest first to determine sequence
     });
 
-    // Add treatment sequence number to each appointment
-    const appointmentsWithSequence = appointments.map((appointment, index) => ({
-      ...appointment,
-      treatmentNumber: index + 1, // 1st, 2nd, 3rd, etc.
-      treatmentSequence: getOrdinalNumber(index + 1), // "First", "Second", "Third", etc.
-    }));
+    // Log sensitive action (non-blocking - don't fail if logging fails)
+    logSensitiveAction(req, "CHECKIN_APPOINTMENT", {
+      appointmentId: appointmentId,
+      patientId: appointment.patientId,
+      checkedInAt: updatedAppointment.updatedAt, // Use updatedAt as check-in timestamp
+      checkedInBy: userId,
+    }).catch((logError) => {
+      console.error("Error logging check-in action:", logError);
+      // Don't throw - logging failure shouldn't break the request
+    });
 
     return sendSuccess(
       res,
-      {
-        patient: {
-          id: patient.id,
-          name: patient.name,
-        },
-        totalAppointments: appointmentsWithSequence.length,
-        appointments: appointmentsWithSequence,
-      },
+      updatedAppointment,
       200,
-      "Patient appointments retrieved successfully"
+      "Patient checked in successfully"
     );
   } catch (error) {
-    console.error("Get patient appointments with sequence error:", error);
+    console.error("Check in appointment error:", error);
+    console.error("Error stack:", error.stack);
+    return sendError(
+      res,
+      error.message || "Server error",
+      500,
+      process.env.NODE_ENV === "development" ? error : null
+    );
+  }
+};
+
+// Cancel appointment
+const cancelAppointment = async (req, res) => {
+  try {
+    const { id: appointmentId } = req.params;
+    const { reason } = req.body;
+    const { id: userId, role, branchId } = req.user;
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+    });
+
+    if (!appointment) {
+      return sendError(res, "Appointment not found", 404);
+    }
+
+    // Check permissions
+    if (role === "RECEPTION" && appointment.branchId !== branchId) {
+      return sendError(
+        res,
+        "You can only cancel appointments in your branch",
+        403
+      );
+    }
+
+    // Update appointment status to CANCELLED
+    // Note: cancelledAt, cancelledBy, and cancellationReason fields don't exist in schema yet
+    // Using updatedAt to track when cancellation occurred
+    // Store cancellation reason in visitReason if provided
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        status: "CANCELLED",
+        // Store cancellation reason in visitReason if provided
+        // Note: This will overwrite existing visitReason, but it's the only text field available
+        visitReason: reason
+          ? `CANCELLED: ${reason}`
+          : appointment.visitReason || null,
+        // updatedAt will be automatically set by Prisma
+      },
+      include: {
+        patient: true,
+        branch: true,
+        dentist: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    // Log sensitive action (non-blocking - don't fail if logging fails)
+    logSensitiveAction(req, "CANCEL_APPOINTMENT", {
+      appointmentId: appointmentId,
+      patientId: appointment.patientId,
+      reason: reason,
+      cancelledAt: updatedAppointment.updatedAt, // Use updatedAt as cancellation timestamp
+      cancelledBy: userId,
+    }).catch((logError) => {
+      console.error("Error logging cancel appointment action:", logError);
+    });
+
+    return sendSuccess(
+      res,
+      updatedAppointment,
+      200,
+      "Appointment cancelled successfully"
+    );
+  } catch (error) {
+    console.error("Cancel appointment error:", error);
     return sendError(res, "Server error", 500, error);
   }
 };
 
-/**
- * Helper function to convert number to ordinal (1 -> "First", 2 -> "Second", etc.)
- */
-const getOrdinalNumber = (num) => {
-  const ordinals = [
-    "First",
-    "Second",
-    "Third",
-    "Fourth",
-    "Fifth",
-    "Sixth",
-    "Seventh",
-    "Eighth",
-    "Ninth",
-    "Tenth",
-    "Eleventh",
-    "Twelfth",
-    "Thirteenth",
-    "Fourteenth",
-    "Fifteenth",
-    "Sixteenth",
-    "Seventeenth",
-    "Eighteenth",
-    "Nineteenth",
-    "Twentieth",
-  ];
+// Bulk operations on appointments
+const bulkAppointmentOperations = async (req, res) => {
+  try {
+    const { appointmentIds, operation, data } = req.body;
+    const { id: userId, role, branchId } = req.user;
 
-  if (num <= 20) {
-    return ordinals[num - 1];
+    if (
+      !appointmentIds ||
+      !Array.isArray(appointmentIds) ||
+      appointmentIds.length === 0
+    ) {
+      return sendError(res, "Appointment IDs are required", 400);
+    }
+
+    if (!operation) {
+      return sendError(res, "Operation is required", 400);
+    }
+
+    // Get appointments to check permissions
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        id: { in: appointmentIds },
+      },
+    });
+
+    // Check permissions
+    if (role === "RECEPTION") {
+      const invalidAppointments = appointments.filter(
+        (apt) => apt.branchId !== branchId
+      );
+      if (invalidAppointments.length > 0) {
+        return sendError(
+          res,
+          "You can only perform operations on appointments in your branch",
+          403
+        );
+      }
+    }
+
+    let result;
+
+    switch (operation) {
+      case "cancel":
+        // Note: cancelledAt, cancelledBy, and cancellationReason fields don't exist in schema yet
+        result = await prisma.appointment.updateMany({
+          where: {
+            id: { in: appointmentIds },
+          },
+          data: {
+            status: "CANCELLED",
+            // Store cancellation reason in visitReason if provided
+            visitReason: data?.reason ? `CANCELLED: ${data.reason}` : undefined,
+          },
+        });
+        break;
+
+      case "reschedule":
+        if (!data?.date || !data?.time) {
+          return sendError(
+            res,
+            "Date and time are required for rescheduling",
+            400
+          );
+        }
+        const newDateTime = new Date(`${data.date}T${data.time}`);
+        // Update each appointment individually to handle conflicts
+        const updatePromises = appointmentIds.map((id) =>
+          prisma.appointment.update({
+            where: { id },
+            data: {
+              date: newDateTime,
+              visitReason: data.reason || undefined,
+            },
+          })
+        );
+        await Promise.all(updatePromises);
+        result = { count: appointmentIds.length };
+        break;
+
+      default:
+        return sendError(res, "Invalid operation", 400);
+    }
+
+    return sendSuccess(
+      res,
+      { affected: result.count || appointmentIds.length },
+      200,
+      `Bulk ${operation} completed successfully`
+    );
+  } catch (error) {
+    console.error("Bulk appointment operations error:", error);
+    return sendError(res, "Server error", 500, error);
   }
-
-  // For numbers > 20, use numeric format
-  return `${num}th`;
 };
 
 module.exports = {
@@ -995,4 +1081,9 @@ module.exports = {
   getXrayAppointments,
   updateAppointment,
   getPatientAppointmentsWithSequence,
+  getAppointmentStats,
+  rescheduleAppointment,
+  checkInAppointment,
+  cancelAppointment,
+  bulkAppointmentOperations,
 };

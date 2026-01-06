@@ -42,11 +42,21 @@ const ProtectedRoute = ({ children, role }) => {
   }
 
   // For dashboard routes (with role), check if branch is selected
-  // Admin users don't need branch selection
-  if (role && user.role !== "ADMIN") {
-    const selectedBranch = localStorage.getItem("selectedBranch");
-    if (!selectedBranch) {
-      return <Navigate to="/branch-select" replace />;
+  // ADMIN users don't need branch selection
+  // Branch should be set from user object during login, but if missing, use user.branch
+  if (role && role !== "ADMIN") {
+    let selectedBranch = localStorage.getItem("selectedBranch");
+    if (!selectedBranch && user.branch) {
+      // Set branch from user object if not already set
+      localStorage.setItem("selectedBranch", JSON.stringify(user.branch));
+      selectedBranch = JSON.stringify(user.branch);
+    }
+    // Only redirect if branch is truly missing (shouldn't happen after login)
+    if (!selectedBranch && !user.branch) {
+      console.warn("Branch not found for user, redirecting to login");
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      return <Navigate to="/login" replace />;
     }
   }
 

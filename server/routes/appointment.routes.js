@@ -7,6 +7,11 @@ const {
   getXrayAppointments,
   updateAppointment,
   getPatientAppointmentsWithSequence,
+  getAppointmentStats,
+  rescheduleAppointment,
+  checkInAppointment,
+  cancelAppointment,
+  bulkAppointmentOperations,
 } = require("../controllers/appointment.controller");
 const authMiddleware = require("../middleware/auth.middleware");
 const checkRole = require("../middleware/role.middleware");
@@ -30,7 +35,7 @@ router.post(
 router.get(
   "/reception",
   authMiddleware,
-  checkRole("RECEPTION"),
+  checkRole("ADMIN", "RECEPTION"),
   validateReceptionAppointmentsQuery,
   validate,
   getReceptionAppointments
@@ -64,8 +69,50 @@ router.put(
 router.get(
   "/patient/:patientId/sequence",
   authMiddleware,
-  checkRole("RECEPTION", "DENTIST", "ADMIN"),
+  checkRole("ADMIN", "RECEPTION", "DENTIST"),
   getPatientAppointmentsWithSequence
+);
+
+// New endpoints for enhanced features
+router.get(
+  "/stats",
+  authMiddleware,
+  checkRole("ADMIN", "RECEPTION"),
+  getAppointmentStats
+);
+
+router.post(
+  "/:id/reschedule",
+  authMiddleware,
+  checkRole("RECEPTION", "ADMIN"),
+  validateAppointmentId,
+  validate,
+  rescheduleAppointment
+);
+
+router.post(
+  "/:id/checkin",
+  authMiddleware,
+  checkRole("RECEPTION", "ADMIN"),
+  validateAppointmentId,
+  validate,
+  checkInAppointment
+);
+
+router.post(
+  "/:id/cancel",
+  authMiddleware,
+  checkRole("RECEPTION", "ADMIN"),
+  validateAppointmentId,
+  validate,
+  cancelAppointment
+);
+
+router.post(
+  "/bulk",
+  authMiddleware,
+  checkRole("RECEPTION", "ADMIN"),
+  bulkAppointmentOperations
 );
 
 module.exports = router;

@@ -49,14 +49,32 @@ const searchPatientHistory = async (req, res) => {
             email: true,
           },
         },
-        treatment: true,
-        xrayResult: true,
+        treatments: {
+          orderBy: { createdAt: 'desc' },
+          take: 1, // Get only the most recent treatment
+        },
+        xrayResult: {
+          include: {
+            images: {
+              orderBy: { uploadedAt: "asc" },
+            },
+          },
+        },
       },
       orderBy: { date: "desc" },
     });
 
+    // Transform for backward compatibility - add 'treatment' field from most recent treatment
+    const appointmentsWithTreatment = appointments.map((appointment) => {
+      const transformed = { ...appointment };
+      if (transformed.treatments && Array.isArray(transformed.treatments)) {
+        transformed.treatment = transformed.treatments.length > 0 ? transformed.treatments[0] : null;
+      }
+      return transformed;
+    });
+
     // Format results for unified history display
-    const history = appointments.map((appointment) => ({
+    const history = appointmentsWithTreatment.map((appointment) => ({
       id: appointment.id,
       type: "Appointment",
       patientName: appointment.patientName,
@@ -79,6 +97,10 @@ const searchPatientHistory = async (req, res) => {
             result: appointment.xrayResult.result,
             imageUrl: appointment.xrayResult.imageUrl,
             sentToDentist: appointment.xrayResult.sentToDentist,
+            images: appointment.xrayResult.images || [],
+            xrayType: appointment.xrayResult.xrayType,
+            createdAt: appointment.xrayResult.createdAt,
+            updatedAt: appointment.xrayResult.updatedAt,
           }
         : null,
       createdAt: appointment.createdAt,
@@ -115,6 +137,34 @@ const getPatientHistory = async (req, res) => {
 
     // No role-based filtering - always display all patient data per branch
 
+    // #region agent log
+    const fs = require("fs");
+    const path = require("path");
+    const debugLog = (data) => {
+      try {
+        const projectRoot = path.resolve(__dirname, "../..");
+        const logPath = path.join(projectRoot, ".cursor", "debug.log");
+        const logEntry = JSON.stringify(data) + "\n";
+        fs.appendFileSync(logPath, logEntry, "utf8");
+      } catch (err) {
+        console.error("Debug log error:", err.message);
+      }
+    };
+    debugLog({
+      location: "history.controller.js:141",
+      message: "before fetching appointments",
+      data: {
+        patientId,
+        branchId,
+        whereClause: where,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H3",
+    });
+    // #endregion
+
     // Get all appointments for this patient, ordered by date (oldest first) for sequence calculation
     const appointments = await prisma.appointment.findMany({
       where,
@@ -140,8 +190,17 @@ const getPatientHistory = async (req, res) => {
             email: true,
           },
         },
-        treatment: true,
-        xrayResult: true,
+        treatments: {
+          orderBy: { createdAt: 'desc' },
+          take: 1, // Get only the most recent treatment for display
+        },
+        xrayResult: {
+          include: {
+            images: {
+              orderBy: { uploadedAt: "asc" },
+            },
+          },
+        },
         patient: {
           select: {
             id: true,
@@ -158,15 +217,44 @@ const getPatientHistory = async (req, res) => {
       orderBy: { date: "asc" }, // Oldest first to calculate sequence numbers
     });
 
+    // #region agent log
+    debugLog({
+      location: "history.controller.js:190",
+      message: "appointments fetched",
+      data: {
+        appointmentsCount: appointments.length,
+        sampleAppointments: appointments.slice(0, 3).map(apt => ({
+          id: apt.id,
+          date: apt.date,
+          patientName: apt.patientName,
+          branchId: apt.branchId,
+        })),
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H3",
+    });
+    // #endregion
+
+    // Transform for backward compatibility - add 'treatment' field from most recent treatment
+    const appointmentsWithTreatment = appointments.map((appointment) => {
+      const transformed = { ...appointment };
+      if (transformed.treatments && Array.isArray(transformed.treatments)) {
+        transformed.treatment = transformed.treatments.length > 0 ? transformed.treatments[0] : null;
+      }
+      return transformed;
+    });
+
     // Add treatment sequence numbers to appointments
-    const appointmentsWithSequence = appointments.map((appointment, index) => ({
+    const appointmentsWithSequence = appointmentsWithTreatment.map((appointment, index) => ({
       ...appointment,
       treatmentNumber: index + 1,
       treatmentSequence: getOrdinalNumber(index + 1),
     }));
 
-    // Get all treatments for this patient
-    const treatments = await prisma.treatment.findMany({
+    // Get all treatments for this patient (ordered by appointment date, then creation date - chronological order)
+    const treatmentsRaw = await prisma.treatment.findMany({
       where: {
         appointment: {
           patientId: patientId,
@@ -179,13 +267,38 @@ const getPatientHistory = async (req, res) => {
             id: true,
             date: true,
             patientName: true,
+            branch: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+              },
+            },
+            dentist: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [
+        { appointment: { date: "asc" } }, // Order by appointment date first (chronological - oldest first)
+        { createdAt: "asc" }, // Then by creation date (oldest first)
+      ],
     });
 
+    // Add sequence numbers to treatments (1st, 2nd, 3rd, etc.)
+    const treatments = treatmentsRaw.map((treatment, index) => ({
+      ...treatment,
+      treatmentNumber: index + 1,
+      treatmentSequence: getOrdinalNumber(index + 1),
+    }));
+
     // Get all X-ray results for this patient
+    // X-Rays are linked through appointments, so we query via appointment.patientId
     const xrayResults = await prisma.xRay.findMany({
       where: {
         appointment: {
@@ -199,48 +312,129 @@ const getPatientHistory = async (req, res) => {
             id: true,
             date: true,
             patientName: true,
+            branchId: true,
+            patient: {
+              select: {
+                id: true,
+                name: true,
+                phone: true,
+                email: true,
+              },
+            },
           },
+        },
+        images: {
+          orderBy: { uploadedAt: "asc" },
         },
       },
       orderBy: { createdAt: "desc" },
     });
 
-    // Get payments (derived from completed appointments with treatments)
-    // Payments are represented as completed appointments with treatments
-    const payments = appointmentsWithSequence
-      .filter(
-        (apt) =>
-          apt.status === "COMPLETED" &&
-          apt.treatment &&
-          apt.treatment.status === "COMPLETED"
-      )
-      .map((apt) => {
-        // Calculate total cost from treatment procedureLogs if available
-        let amount = 0;
-        if (apt.treatment?.procedureLogs && Array.isArray(apt.treatment.procedureLogs)) {
-          amount = apt.treatment.procedureLogs.reduce((sum, proc) => {
-            return sum + (proc.cost || 0);
-          }, 0);
-        } else if (apt.treatment?.totalCost) {
-          amount = apt.treatment.totalCost;
-        }
+    // Get payments from Payment table (not derived from appointments)
+    const paymentsRaw = await prisma.payment.findMany({
+      where: {
+        appointment: {
+          patientId: patientId,
+          ...(branchId ? { branchId } : {}),
+        },
+      },
+      include: {
+        appointment: {
+          include: {
+            patient: {
+              select: {
+                id: true,
+                name: true,
+                phone: true,
+                email: true,
+              },
+            },
+            dentist: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            treatments: {
+              select: {
+                id: true,
+                totalCost: true,
+                procedureLogs: true,
+              },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Transform payments to match frontend format
+    const payments = paymentsRaw.map((payment) => {
+      const treatment = payment.appointment.treatments && payment.appointment.treatments.length > 0
+        ? payment.appointment.treatments[0]
+        : null;
 
         return {
-          id: apt.id,
-          date: apt.date,
-          amount: amount,
-          status: "PAID", // Assume paid if treatment is completed
-          appointmentId: apt.id,
-          treatment: apt.treatment,
-        };
-      })
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
+        id: payment.id,
+        appointmentId: payment.appointmentId,
+        patientName: payment.appointment.patientName || payment.appointment.patient?.name || "N/A",
+        patient: payment.appointment.patient,
+        date: payment.appointment.date || payment.paymentDate,
+        dentist: payment.appointment.dentist?.name || "N/A",
+        treatment: treatment,
+        amount: payment.amount,
+        paidAmount: payment.paidAmount,
+        paymentStatus: payment.paymentStatus,
+        paymentMethod: payment.paymentMethod,
+        paymentDate: payment.paymentDate,
+        showDetailedBilling: payment.showDetailedBilling || false,
+        isHidden: payment.isHidden || false,
+        appointment: payment.appointment,
+      };
+    });
+
+    // Get patient information to include in response
+    const patient = await prisma.patient.findUnique({
+      where: { id: patientId },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        gender: true,
+        dateOfBirth: true,
+        address: true,
+        cardNo: true,
+      },
+    });
+
+    // #region agent log
+    debugLog({
+      location: "history.controller.js:356",
+      message: "returning patient history",
+      data: {
+        patientId,
+        patientName: patient?.name,
+        appointmentsCount: appointmentsWithSequence.length,
+        treatmentsCount: treatments.length,
+        sampleAppointmentPatientNames: appointmentsWithSequence.slice(0, 3).map(apt => apt.patientName),
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H3",
+    });
+    // #endregion
 
     return sendSuccess(res, {
       appointments: appointmentsWithSequence, // Include sequence numbers
       treatments,
       xrayResults,
       payments,
+      patient, // Include patient information
     });
   } catch (error) {
     console.error("Get patient history error:", error);

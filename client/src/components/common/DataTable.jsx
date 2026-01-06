@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useId } from "react";
 import { sortData, filterData, paginateData } from "../../utils/tableUtils";
 import { exportToCSV, printTable, exportToPDF } from "../../utils/exportUtils";
 
@@ -129,9 +129,9 @@ const DataTable = ({
   const getSortIcon = (columnKey) => {
     if (sortColumn !== columnKey) {
       return (
-        <span className="text-gray-400 ml-1">
+        <span className="ml-1 text-gray-400">
           <svg
-            className="w-4 h-4 inline"
+            className="inline w-4 h-4"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -147,19 +147,20 @@ const DataTable = ({
       );
     }
     return (
-      <span className="text-indigo-600 ml-1">
+      <span className="ml-1 text-indigo-600">
         {sortDirection === "asc" ? "↑" : "↓"}
       </span>
     );
   };
 
-  const tableId = `datatable-${Date.now()}`;
+  // Generate stable table ID (only once per component instance)
+  const tableId = `datatable-${useId()}`;
 
   return (
     <div className={`bg-white rounded-lg shadow-md ${className}`}>
       {/* Header with search and export */}
       <div className="p-4 border-b border-gray-200">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div className="flex-1 w-full sm:w-auto">
             {searchable && (
               <div className="relative">
@@ -171,7 +172,7 @@ const DataTable = ({
                     setCurrentPage(1);
                   }}
                   placeholder="Search..."
-                  className="w-full sm:w-64 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md sm:w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
                 {searchTerm && (
                   <button
@@ -179,7 +180,7 @@ const DataTable = ({
                       setSearchTerm("");
                       setCurrentPage(1);
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    className="absolute text-gray-400 -translate-y-1/2 right-2 top-1/2 hover:text-gray-600"
                   >
                     ✕
                   </button>
@@ -227,12 +228,15 @@ const DataTable = ({
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto">
-        <table id={tableId} className="min-w-full divide-y divide-gray-200">
+      <div className="w-full overflow-x-auto">
+        <table
+          id={tableId}
+          className="w-full min-w-full divide-y divide-gray-200 table-auto"
+        >
           <thead className="bg-gray-50">
             <tr>
               {actions.length > 0 && (
-                <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase md:px-6">
                   <input
                     type="checkbox"
                     checked={
@@ -240,7 +244,7 @@ const DataTable = ({
                       selectedRows.length === paginatedData.length
                     }
                     onChange={(e) => handleSelectAll(e.target.checked)}
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                    className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
                   />
                 </th>
               )}
@@ -254,7 +258,7 @@ const DataTable = ({
                     column.sortable !== false && sortable
                       ? "cursor-pointer hover:bg-gray-100 select-none"
                       : ""
-                  }`}
+                  } ${column.className || ""}`}
                 >
                   <div className="flex items-center">
                     {column.label}
@@ -265,7 +269,7 @@ const DataTable = ({
                 </th>
               ))}
               {actions.length > 0 && (
-                <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase md:px-6">
                   Actions
                 </th>
               )}
@@ -291,7 +295,7 @@ const DataTable = ({
                   } ${selectedRows.includes(row.id) ? "bg-indigo-50" : ""}`}
                 >
                   {actions.length > 0 && (
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4 md:px-6 whitespace-nowrap">
                       <input
                         type="checkbox"
                         checked={selectedRows.includes(row.id)}
@@ -299,15 +303,25 @@ const DataTable = ({
                           handleRowSelect(row.id, e.target.checked)
                         }
                         onClick={(e) => e.stopPropagation()}
-                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                        className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
                       />
                     </td>
                   )}
-                  {columns.map((column) => {
-                    let cellValue = row[column.key];
+                  {columns.map((column, colIndex) => {
+                    if (!column) return <td key={`col-${colIndex}`}></td>;
+
+                    let cellValue = column.accessor
+                      ? column.accessor(row)
+                      : column.key
+                      ? row[column.key]
+                      : null;
 
                     // Handle nested properties
-                    if (column.key.includes(".")) {
+                    if (
+                      column.key &&
+                      typeof column.key === "string" &&
+                      column.key.includes(".")
+                    ) {
                       const keys = column.key.split(".");
                       cellValue = keys.reduce((obj, key) => obj?.[key], row);
                     }
@@ -320,7 +334,9 @@ const DataTable = ({
                     return (
                       <td
                         key={column.key}
-                        className="px-3 md:px-6 py-4 whitespace-nowrap text-sm text-gray-900"
+                        className={`px-3 md:px-6 py-4 text-sm text-gray-900 ${
+                          column.className || ""
+                        }`}
                       >
                         {cellValue != null ? cellValue : "—"}
                       </td>
@@ -328,12 +344,15 @@ const DataTable = ({
                   })}
                   {actions.length > 0 && (
                     <td
-                      className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium"
+                      className="px-3 py-4 text-sm font-medium md:px-6 whitespace-nowrap"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="flex items-center space-x-2">
                         {actions
-                          .filter((action) => !action.condition || action.condition(row))
+                          .filter(
+                            (action) =>
+                              !action.condition || action.condition(row)
+                          )
                           .map((action, idx) => (
                             <button
                               key={idx}
@@ -362,7 +381,7 @@ const DataTable = ({
 
       {/* Pagination */}
       {pagination && totalPages > 1 && (
-        <div className="px-4 py-3 border-t border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-2">
+        <div className="flex flex-col items-center justify-between gap-2 px-4 py-3 border-t border-gray-200 sm:flex-row">
           <div className="text-sm text-gray-700">
             Page {currentPage} of {totalPages}
           </div>

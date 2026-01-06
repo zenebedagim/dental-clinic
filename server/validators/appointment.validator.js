@@ -10,7 +10,8 @@ const { body, param, query } = require("express-validator");
  */
 const validateCreateAppointment = [
   body("patientId")
-    .optional()
+    .notEmpty()
+    .withMessage("Patient ID is required")
     .isUUID()
     .withMessage("Invalid patient ID format"),
   body("patientName")
@@ -27,8 +28,22 @@ const validateCreateAppointment = [
   body("phoneNumber")
     .optional()
     .trim()
-    .isLength({ min: 0, max: 20 })
-    .withMessage("Phone number must be less than 20 characters"),
+    .custom((value) => {
+      if (!value || value.trim().length === 0) {
+        return true; // Optional field
+      }
+      // Ethiopia phone validation: 09XXXXXXXX (9 digits after 0) or +2519XXXXXXXX
+      const digitsOnly = value.replace(/\D/g, "");
+      // Remove leading 0 or +251
+      const clean = digitsOnly.replace(/^0|^251/, "");
+      // Must be 9 digits starting with 9
+      if (clean.length === 9 && clean.startsWith("9")) {
+        return true;
+      }
+      throw new Error(
+        "Ethiopian phone number must be 9 digits starting with 9 (e.g., 0912345678)"
+      );
+    }),
   body("address")
     .optional()
     .trim()
@@ -38,13 +53,7 @@ const validateCreateAppointment = [
     .optional()
     .isISO8601()
     .withMessage("Invalid date of birth format. Use ISO 8601 format"),
-  body("patientId").custom((value, { req }) => {
-    // Require either patientId or patientName
-    if (!value && !req.body.patientName) {
-      throw new Error("Either patient ID or patient name is required");
-    }
-    return true;
-  }),
+  // patientId is now required (validated above), so no need for custom validation
   body("branchId").isUUID().withMessage("Invalid branch ID format"),
   body("dentistId").isUUID().withMessage("Invalid dentist ID format"),
   body("xrayId")
@@ -78,6 +87,10 @@ const validateCreateAppointment = [
  */
 const validateUpdateAppointment = [
   param("id").isUUID().withMessage("Invalid appointment ID format"),
+  body("patientId")
+    .optional()
+    .isUUID()
+    .withMessage("Invalid patient ID format"),
   body("patientName")
     .optional()
     .trim()
@@ -121,6 +134,24 @@ const validateAppointmentId = [
  */
 const validateBranchIdQuery = [
   query("branchId").optional().isUUID().withMessage("Invalid branch ID format"),
+  query("dateFrom")
+    .optional()
+    .isISO8601()
+    .withMessage("Invalid dateFrom format. Use ISO 8601 format"),
+  query("dateTo")
+    .optional()
+    .isISO8601()
+    .withMessage("Invalid dateTo format. Use ISO 8601 format"),
+  query("treatmentStatus")
+    .optional()
+    .isIn(["IN_PROGRESS", "COMPLETED", "PENDING"])
+    .withMessage(
+      "Invalid treatment status. Must be IN_PROGRESS, COMPLETED, or PENDING"
+    ),
+  query("completedToday")
+    .optional()
+    .isIn(["true", "false"])
+    .withMessage("completedToday must be 'true' or 'false'"),
 ];
 
 /**
@@ -154,6 +185,16 @@ const validateReceptionAppointmentsQuery = [
     .trim()
     .isLength({ min: 1 })
     .withMessage("Patient phone must be at least 1 character"),
+  query("sortBy")
+    .optional()
+    .trim()
+    .isIn(["date", "createdAt", "patientName"])
+    .withMessage("sortBy must be one of: date, createdAt, patientName"),
+  query("orderBy")
+    .optional()
+    .trim()
+    .isIn(["asc", "desc"])
+    .withMessage("orderBy must be 'asc' or 'desc'"),
 ];
 
 module.exports = {

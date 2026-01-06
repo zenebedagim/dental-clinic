@@ -150,6 +150,33 @@ const updateBranch = async (req, res) => {
 };
 
 const archiveBranch = async (req, res) => {
+  // #region agent log
+  const fs = require("fs");
+  const path = require("path");
+  const debugLog = (data) => {
+    try {
+      const projectRoot = path.resolve(__dirname, "../..");
+      const logPath = path.join(projectRoot, ".cursor", "debug.log");
+      const logEntry = JSON.stringify(data) + "\n";
+      fs.appendFileSync(logPath, logEntry, "utf8");
+    } catch (err) {
+      console.error("Debug log error:", err.message);
+    }
+  };
+  debugLog({
+    location: "branch.controller.js:152",
+    message: "archiveBranch called",
+    data: {
+      branchId: req.params.id,
+      userId: req.user?.id,
+      userRole: req.user?.role,
+    },
+    timestamp: Date.now(),
+    sessionId: "debug-session",
+    runId: "run1",
+    hypothesisId: "H1",
+  });
+  // #endregion
   try {
     const { id } = req.params;
 
@@ -157,6 +184,22 @@ const archiveBranch = async (req, res) => {
     const existingBranch = await prisma.branch.findUnique({
       where: { id },
     });
+
+    // #region agent log
+    debugLog({
+      location: "branch.controller.js:161",
+      message: "branch lookup result",
+      data: {
+        branchId: id,
+        branchFound: !!existingBranch,
+        branchName: existingBranch?.name,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
 
     if (!existingBranch) {
       return sendError(res, "Branch not found", 404);
@@ -169,6 +212,23 @@ const archiveBranch = async (req, res) => {
         status: { in: ["PENDING", "IN_PROGRESS"] },
       },
     });
+
+    // #region agent log
+    debugLog({
+      location: "branch.controller.js:173",
+      message: "active appointments check",
+      data: {
+        branchId: id,
+        hasActiveAppointments: !!activeAppointments,
+        activeAppointmentId: activeAppointments?.id,
+        activeAppointmentStatus: activeAppointments?.status,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
 
     if (activeAppointments) {
       return sendError(
@@ -190,6 +250,22 @@ const archiveBranch = async (req, res) => {
       "Branch archived successfully"
     );
   } catch (error) {
+    // #region agent log
+    debugLog({
+      location: "branch.controller.js:192",
+      message: "archiveBranch error",
+      data: {
+        branchId: req.params.id,
+        errorMessage: error.message,
+        errorName: error.name,
+        errorStack: error.stack?.substring(0, 200),
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
     console.error("Archive branch error:", error);
     return sendError(res, "Failed to archive branch", 500, error);
   }

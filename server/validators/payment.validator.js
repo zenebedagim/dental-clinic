@@ -7,9 +7,12 @@ const validateCreatePayment = [
     .isUUID()
     .withMessage("Invalid appointment ID format"),
   body("amount")
-    .notEmpty()
-    .withMessage("Amount is required")
-    .isFloat({ min: 0 })
+    .optional({ nullable: true, checkFalsy: true })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      const num = parseFloat(value);
+      return !isNaN(num) && num >= 0;
+    })
     .withMessage("Amount must be a positive number"),
   body("paidAmount")
     .optional()
@@ -20,10 +23,17 @@ const validateCreatePayment = [
     .isIn(["PAID", "PARTIAL", "UNPAID"])
     .withMessage("Payment status must be PAID, PARTIAL, or UNPAID"),
   body("paymentMethod")
+    .optional({ nullable: true, checkFalsy: true })
+    .custom((value) => {
+      if (value === null || value === undefined) return true;
+      return typeof value === "string";
+    })
+    .withMessage("Payment method must be a string or null"),
+  body("notes").optional({ nullable: true, checkFalsy: true }).isString().withMessage("Notes must be a string"),
+  body("isHidden")
     .optional()
-    .isString()
-    .withMessage("Payment method must be a string"),
-  body("notes").optional().isString().withMessage("Notes must be a string"),
+    .isBoolean()
+    .withMessage("isHidden must be a boolean value"),
 ];
 
 const validateUpdatePayment = [
@@ -45,10 +55,13 @@ const validateUpdatePayment = [
     .isIn(["PAID", "PARTIAL", "UNPAID"])
     .withMessage("Payment status must be PAID, PARTIAL, or UNPAID"),
   body("paymentMethod")
-    .optional()
-    .isString()
-    .withMessage("Payment method must be a string"),
-  body("notes").optional().isString().withMessage("Notes must be a string"),
+    .optional({ nullable: true, checkFalsy: true })
+    .custom((value) => {
+      if (value === null || value === undefined) return true;
+      return typeof value === "string";
+    })
+    .withMessage("Payment method must be a string or null"),
+  body("notes").optional({ nullable: true, checkFalsy: true }).isString().withMessage("Notes must be a string"),
   body("paymentDate")
     .optional()
     .isISO8601()

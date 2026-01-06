@@ -1,338 +1,408 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
 import api from "../../../services/api";
 import useBranch from "../../../hooks/useBranch";
-import usePatient from "../../../hooks/usePatient";
 import Modal from "../../common/Modal";
-import DataTable from "../../common/DataTable";
 import { formatDate } from "../../../utils/tableUtils";
+import {
+  formatCurrency,
+  formatPaymentStatus,
+  toNumber,
+} from "../shared/PaymentFormatter";
 
-const PatientHistoryModal = ({ isOpen, onClose, patient: propPatient }) => {
+const PatientHistoryModal = ({ isOpen, onClose, patient }) => {
   const { selectedBranch } = useBranch();
-  const { selectedPatient: contextPatient } = usePatient();
-  const navigate = useNavigate();
-  // Use patient from prop if provided, otherwise use context selected patient
-  const patient = propPatient || contextPatient;
-  const [activeTab, setActiveTab] = useState("appointments");
-  const [appointments, setAppointments] = useState([]);
-  const [treatments, setTreatments] = useState([]);
+  const [patientHistory, setPatientHistory] = useState(null);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingPayments, setLoadingPayments] = useState(false);
 
+  // Fetch patient appointments history (reception view - no treatments)
+  const fetchPatientHistory = useCallback(
+    async (patientId) => {
+      if (!patientId || !selectedBranch?.id) return;
+
+      setLoading(true);
+      try {
+        const response = await api.get(`/history/patient/${patientId}`, {
+          params: { branchId: selectedBranch.id },
+        });
+        const history = response.data?.data || response.data || {};
+        // Only keep appointments, remove treatments
+        setPatientHistory({
+          ...history,
+          appointments: history.appointments || [],
+          treatments: [], // Never show treatments in reception view
+        });
+      } catch (err) {
+        console.error("Error fetching patient history:", err);
+        setPatientHistory(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [selectedBranch]
+  );
+
+  // Fetch payments for this patient
+  const fetchPatientPayments = useCallback(
+    async (patientId) => {
+      if (!patientId || !selectedBranch?.id) return;
+
+      setLoadingPayments(true);
+      try {
+        // Fetch all payments for the branch and filter by patient
+        const response = await api.get("/payments", {
+          params: {
+            branchId: selectedBranch.id,
+            limit: 1000, // Get enough to filter client-side
+          },
+        });
+        const allPayments = response.data?.data || response.data || [];
+
+        // Filter payments for this patient
+        const patientPayments = allPayments.filter(
+          (payment) =>
+            payment.appointment?.patientId === patientId ||
+            payment.appointment?.patient?.id === patientId
+        );
+
+        // Sort by date (most recent first)
+        patientPayments.sort((a, b) => {
+          const dateA = new Date(a.paymentDate || a.appointment?.date || 0);
+          const dateB = new Date(b.paymentDate || b.appointment?.date || 0);
+          return dateB - dateA;
+        });
+
+        setPayments(patientPayments);
+      } catch (err) {
+        console.error("Error fetching patient payments:", err);
+        setPayments([]);
+      } finally {
+        setLoadingPayments(false);
+      }
+    },
+    [selectedBranch]
+  );
+
+  // Fetch history when patient changes
   useEffect(() => {
     if (isOpen && patient?.id) {
-      fetchPatientHistory();
+      fetchPatientHistory(patient.id);
+      fetchPatientPayments(patient.id);
+    } else {
+      setPatientHistory(null);
+      setPayments([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, patient]);
+  }, [isOpen, patient?.id, fetchPatientHistory, fetchPatientPayments]);
 
-  // Listen for appointment creation events to auto-refresh patient history
+  // Listen for appointment and payment events to auto-refresh
   useEffect(() => {
     if (!isOpen || !patient?.id) return;
 
     const handleAppointmentCreated = () => {
-      // Auto-refresh patient history when appointment is created
-      fetchPatientHistory();
+      fetchPatientHistory(patient.id);
+    };
+
+    const handlePaymentUpdated = () => {
+      fetchPatientPayments(patient.id);
     };
 
     window.addEventListener("appointment-created", handleAppointmentCreated);
+    window.addEventListener("payment-updated", handlePaymentUpdated);
+    window.addEventListener("payment-created", handlePaymentUpdated);
+
     return () => {
       window.removeEventListener(
         "appointment-created",
         handleAppointmentCreated
       );
+      window.removeEventListener("payment-updated", handlePaymentUpdated);
+      window.removeEventListener("payment-created", handlePaymentUpdated);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, patient?.id]);
+  }, [isOpen, patient?.id, fetchPatientHistory, fetchPatientPayments]);
 
-  const fetchPatientHistory = async () => {
-    if (!patient?.id) return;
-
-    // Use AbortController for request cancellation
-    const abortController = new AbortController();
-
-    try {
-      setLoading(true);
-
-      // Parallelize API calls for faster loading
-      const [appointmentsResponse, historyResponse] = await Promise.all([
-        api.get(`/appointments/patient/${patient.id}/sequence`, {
-          params: { branchId: selectedBranch?.id },
-          signal: abortController.signal,
-        }),
-        api.get(`/history/patient/${patient.id}`, {
-          params: { branchId: selectedBranch?.id },
-          signal: abortController.signal,
-        }),
-      ]);
-
-      const appointmentsData =
-        appointmentsResponse.data?.data || appointmentsResponse.data || {};
-      setAppointments(appointmentsData.appointments || []);
-
-      const history = historyResponse.data?.data || historyResponse.data || {};
-      setTreatments(history.treatments || []);
-      setPayments(history.payments || []);
-    } catch (err) {
-      // Ignore abort errors
-      if (err.name === "AbortError") return;
-
-      console.error("Error fetching patient history:", err);
-    } finally {
-      setLoading(false);
-    }
+  // Close main modal
+  const handleClose = () => {
+    setPatientHistory(null);
+    setPayments([]);
+    onClose();
   };
 
-  const appointmentColumns = [
-    {
-      key: "treatmentNumber",
-      label: "Treatment #",
-      sortable: true,
-      render: (value, row) => {
-        if (value) {
-          return (
-            <div className="flex flex-col">
-              <span className="font-semibold text-indigo-600">#{value}</span>
-              <span className="text-xs text-gray-500">
-                {row.treatmentSequence || ""}
-              </span>
-            </div>
-          );
-        }
-        return "—";
-      },
-    },
-    {
-      key: "date",
-      label: "Date & Time",
-      sortable: true,
-      render: (value) => formatDate(value),
-    },
-    {
-      key: "dentist.name",
-      label: "Dentist",
-      sortable: true,
-      render: (value, row) => row.dentist?.name || "N/A",
-    },
-    {
-      key: "status",
-      label: "Status",
-      sortable: true,
-      render: (value) => (
-        <span
-          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-            value === "COMPLETED"
-              ? "bg-green-100 text-green-800"
-              : value === "CANCELLED"
-              ? "bg-red-100 text-red-800"
-              : "bg-yellow-100 text-yellow-800"
-          }`}
-        >
-          {value}
-        </span>
-      ),
-    },
-  ];
-
-  const treatmentColumns = [
-    {
-      key: "appointment.date",
-      label: "Date",
-      sortable: true,
-      render: (value, row) =>
-        formatDate(row.appointment?.date || row.createdAt),
-    },
-    {
-      key: "procedures",
-      label: "Procedures",
-      render: (value) => {
-        if (!value || !Array.isArray(value)) return "—";
-        return `${value.length} procedure(s)`;
-      },
-    },
-    {
-      key: "totalCost",
-      label: "Total Cost",
-      sortable: true,
-      render: (value) =>
-        value
-          ? new Intl.NumberFormat("en-US", {
-              style: "currency",
-              currency: "USD",
-            }).format(value)
-          : "—",
-    },
-  ];
-
-  const paymentColumns = [
-    {
-      key: "date",
-      label: "Date",
-      sortable: true,
-      render: (value) => formatDate(value),
-    },
-    {
-      key: "amount",
-      label: "Amount",
-      sortable: true,
-      render: (value) =>
-        value
-          ? new Intl.NumberFormat("en-US", {
-              style: "currency",
-              currency: "USD",
-            }).format(value)
-          : "—",
-    },
-    {
-      key: "status",
-      label: "Status",
-      sortable: true,
-      render: (value) => (
-        <span
-          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-            value === "PAID"
-              ? "bg-green-100 text-green-800"
-              : "bg-yellow-100 text-yellow-800"
-          }`}
-        >
-          {value || "PENDING"}
-        </span>
-      ),
-    },
-  ];
-
-  const tabs = [
-    { id: "appointments", label: "Appointments", count: appointments.length },
-    { id: "treatments", label: "Treatments", count: treatments.length },
-    { id: "payments", label: "Payments", count: payments.length },
-  ];
+  if (!patient) {
+    return null;
+  }
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={`Patient History: ${patient?.name || ""}`}
-      size="xl"
-    >
-      {loading ? (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-          <p className="mt-2 text-gray-500">Loading history...</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {/* Patient Info */}
+    <>
+      <Modal
+        isOpen={isOpen}
+        onClose={handleClose}
+        title={`Patient History: ${patient.name || ""}`}
+        size="xl"
+      >
+        <div className="space-y-6">
+          {/* Patient Information */}
           <div className="bg-gray-50 p-4 rounded-lg">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <h3 className="font-semibold text-gray-900 mb-3">
+              Patient Information
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <div>
-                <span className="font-medium text-gray-700">Name:</span>{" "}
-                <span className="text-gray-900">{patient?.name}</span>
+                <span className="text-gray-600">Name: </span>
+                <span className="font-medium text-gray-900">
+                  {patient.name}
+                </span>
               </div>
-              {patient?.phone && (
+              {patient.phone && (
                 <div>
-                  <span className="font-medium text-gray-700">Phone:</span>{" "}
-                  <span className="text-gray-900">{patient.phone}</span>
+                  <span className="text-gray-600">Phone: </span>
+                  <span className="font-medium text-gray-900">
+                    {patient.phone}
+                  </span>
                 </div>
               )}
-              {patient?.email && (
+              {patient.email && (
                 <div>
-                  <span className="font-medium text-gray-700">Email:</span>{" "}
-                  <span className="text-gray-900">{patient.email}</span>
+                  <span className="text-gray-600">Email: </span>
+                  <span className="font-medium text-gray-900">
+                    {patient.email}
+                  </span>
                 </div>
               )}
-              {patient?.gender && (
+              {patient.dateOfBirth && (
                 <div>
-                  <span className="font-medium text-gray-700">Gender:</span>{" "}
-                  <span className="text-gray-900">{patient.gender}</span>
+                  <span className="text-gray-600">Date of Birth: </span>
+                  <span className="font-medium text-gray-900">
+                    {formatDate(patient.dateOfBirth, "short")}
+                  </span>
+                </div>
+              )}
+              {patient.gender && (
+                <div>
+                  <span className="text-gray-600">Gender: </span>
+                  <span className="font-medium text-gray-900">
+                    {patient.gender}
+                  </span>
+                </div>
+              )}
+              {patient.cardNo && (
+                <div>
+                  <span className="text-gray-600">Card No: </span>
+                  <span className="font-medium text-gray-900">
+                    {patient.cardNo}
+                  </span>
+                </div>
+              )}
+              {patient.address && (
+                <div className="sm:col-span-2">
+                  <span className="text-gray-600">Address: </span>
+                  <span className="font-medium text-gray-900">
+                    {patient.address}
+                  </span>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="border-b border-gray-200">
-            <nav className="flex space-x-8">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`py-4 px-1 border-b-2 font-medium text-sm min-h-[44px] ${
-                    activeTab === tab.id
-                      ? "border-indigo-500 text-indigo-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                  }`}
-                >
-                  {tab.label} ({tab.count})
-                </button>
-              ))}
-            </nav>
-          </div>
+          {/* Loading State */}
+          {loading && (
+            <div className="py-12 text-center">
+              <div className="inline-block w-8 h-8 border-b-2 border-indigo-600 rounded-full animate-spin"></div>
+              <p className="mt-2 text-gray-500">Loading patient history...</p>
+            </div>
+          )}
 
-          {/* Tab Content */}
-          <div className="min-h-[300px]">
-            {activeTab === "appointments" && (
-              <div className="space-y-4">
-                {appointments.length > 0 && (
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => {
-                        navigate("/reception/appointments");
-                        onClose();
-                      }}
-                      className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-sm"
-                    >
-                      View All Appointments →
-                    </button>
+          {/* Appointments History */}
+          {!loading && patientHistory && (
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-3">
+                Appointment History
+              </h3>
+              {patientHistory.appointments &&
+              patientHistory.appointments.length > 0 ? (
+                <div className="overflow-hidden bg-white rounded-lg shadow-md">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                            Date
+                          </th>
+                          <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                            Dentist
+                          </th>
+                          <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                            Status
+                          </th>
+                          <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                            Visit Reason
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {patientHistory.appointments.map((appointment) => (
+                          <tr key={appointment.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {formatDate(appointment.date, "short")}
+                            </td>
+                            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {appointment.dentist?.name || "N/A"}
+                            </td>
+                            <td className="px-4 py-4 whitespace-nowrap">
+                              <span
+                                className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                  appointment.status === "COMPLETED"
+                                    ? "bg-green-100 text-green-800"
+                                    : appointment.status === "IN_PROGRESS"
+                                    ? "bg-blue-100 text-blue-800"
+                                    : "bg-yellow-100 text-yellow-800"
+                                }`}
+                              >
+                                {appointment.status || "PENDING"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 text-sm text-gray-900">
+                              {appointment.visitReason || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                )}
-                <DataTable
-                  data={appointments}
-                  columns={appointmentColumns}
-                  title="Appointments"
-                  emptyMessage="No appointments found"
-                  pageSize={5}
-                  searchable={true}
-                  sortable={true}
-                  pagination={true}
-                  exportable={false}
-                  printable={false}
-                />
+                </div>
+              ) : (
+                <div className="p-6 bg-white rounded-lg shadow-md">
+                  <p className="py-8 text-center text-gray-500">
+                    No appointment history available
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Payment History */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-3">
+              Payment History
+            </h3>
+            {loadingPayments ? (
+              <div className="py-8 text-center">
+                <div className="inline-block w-6 h-6 border-b-2 border-indigo-600 rounded-full animate-spin"></div>
+                <p className="mt-2 text-sm text-gray-500">
+                  Loading payments...
+                </p>
+              </div>
+            ) : payments.length > 0 ? (
+              <div className="overflow-hidden bg-white rounded-lg shadow-md">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                          Date
+                        </th>
+                        <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                          Amount
+                        </th>
+                        <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                          Paid
+                        </th>
+                        <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                          Status
+                        </th>
+                        <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                          Notes
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {payments.map((payment) => (
+                        <tr key={payment.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {formatDate(
+                              payment.paymentDate || payment.appointment?.date,
+                              "short"
+                            )}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {formatCurrency(toNumber(payment.amount))}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {formatCurrency(toNumber(payment.paidAmount))}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            {(() => {
+                              const statusConfig = formatPaymentStatus(
+                                payment.paymentStatus
+                              );
+                              return (
+                                <span
+                                  className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusConfig.className}`}
+                                >
+                                  {statusConfig.label}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-4 py-4 text-sm text-gray-900">
+                            {payment.notes || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="p-6 bg-white rounded-lg shadow-md">
+                <p className="py-8 text-center text-gray-500">
+                  No payment history available
+                </p>
               </div>
             )}
-
-            {activeTab === "treatments" && (
-              <DataTable
-                data={treatments}
-                columns={treatmentColumns}
-                title="Treatments"
-                emptyMessage="No treatments found"
-                pageSize={5}
-                searchable={true}
-                sortable={true}
-                pagination={true}
-                exportable={false}
-                printable={false}
-              />
-            )}
-
-            {activeTab === "payments" && (
-              <DataTable
-                data={payments}
-                columns={paymentColumns}
-                title="Payments"
-                emptyMessage="No payments found"
-                pageSize={5}
-                searchable={true}
-                sortable={true}
-                pagination={true}
-                exportable={false}
-                printable={false}
-              />
-            )}
           </div>
+
+          {/* Summary Statistics */}
+          {!loading && patientHistory && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="text-sm text-blue-600 font-medium">
+                  Total Appointments
+                </div>
+                <div className="text-2xl font-bold text-blue-900">
+                  {patientHistory.appointments?.length || 0}
+                </div>
+              </div>
+              <div className="bg-green-50 p-4 rounded-lg">
+                <div className="text-sm text-green-600 font-medium">
+                  Total Payments
+                </div>
+                <div className="text-2xl font-bold text-green-900">
+                  {payments.length || 0}
+                </div>
+              </div>
+              <div className="bg-purple-50 p-4 rounded-lg">
+                <div className="text-sm text-purple-600 font-medium">
+                  Total Paid
+                </div>
+                <div className="text-2xl font-bold text-purple-900">
+                  {formatCurrency(
+                    payments.reduce((sum, p) => sum + toNumber(p.paidAmount), 0)
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* No History Message */}
+          {!loading && !patientHistory && (
+            <div className="text-center py-8 text-gray-500">
+              No history available for this patient
+            </div>
+          )}
         </div>
-      )}
-    </Modal>
+      </Modal>
+    </>
   );
 };
 

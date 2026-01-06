@@ -2,14 +2,17 @@ import { useState } from "react";
 import {
   PRIMARY_TEETH,
   PERMANENT_TEETH,
-  TOOTH_CONDITIONS,
+  DENTAL_PROCEDURES,
+  PROCEDURE_CATEGORIES,
 } from "../../../utils/dentalConstants";
 
 const ToothChart = ({
   selectedTeeth = [],
   onTeethChange,
-  toothConditions = {},
-  onConditionChange,
+  procedureLogs = [],
+  onProcedureSelectForTooth,
+  primaryDiagnosis = null,
+  secondaryDiagnoses = [],
 }) => {
   const [toothType, setToothType] = useState("permanent"); // "primary" or "permanent"
   const teeth = toothType === "primary" ? PRIMARY_TEETH : PERMANENT_TEETH;
@@ -25,30 +28,40 @@ const ToothChart = ({
     }
   };
 
-  const getToothColor = (toothNumber) => {
-    const condition = toothConditions[toothNumber];
-    if (condition) {
-      const conditionObj = TOOTH_CONDITIONS.find((c) => c.value === condition);
-      if (conditionObj) {
-        const colorMap = {
-          green: "bg-green-200 border-green-400",
-          red: "bg-red-200 border-red-400",
-          blue: "bg-blue-200 border-blue-400",
-          gray: "bg-gray-300 border-gray-500",
-          black: "bg-black text-white border-black",
-          orange: "bg-orange-200 border-orange-400",
-          yellow: "bg-yellow-200 border-yellow-400",
-          purple: "bg-purple-200 border-purple-400",
-          indigo: "bg-indigo-200 border-indigo-400",
-          pink: "bg-pink-200 border-pink-400",
-          teal: "bg-teal-200 border-teal-400",
-        };
-        return colorMap[conditionObj.color] || "bg-gray-100 border-gray-300";
-      }
-    }
+  /**
+   * Check if a procedure's tooth field matches a tooth number
+   * Handles formats like "14", "18-19", "14,15", "A", etc.
+   */
+  const procedureMatchesTooth = (procedure, toothNumber) => {
+    if (!procedure.tooth) return false;
 
+    const toothStr = String(toothNumber);
+    const procedureTooth = String(procedure.tooth).trim();
+
+    // Check for exact match
+    if (procedureTooth === toothStr) return true;
+
+    // Check if it contains the tooth number (handles ranges like "18-19", lists like "14,15,16")
+    const parts = procedureTooth.split(/[,\-–—]/).map((p) => p.trim());
+    return parts.some((part) => part === toothStr);
+  };
+
+  /**
+   * Get procedures for a specific tooth
+   */
+  const getProceduresForTooth = (toothNumber) => {
+    return procedureLogs.filter((procedure) =>
+      procedureMatchesTooth(procedure, toothNumber)
+    );
+  };
+
+  const getToothColor = (toothNumber) => {
     // Default: selected vs unselected
     if (selectedTeeth.includes(toothNumber)) {
+      const proceduresCount = getProceduresForTooth(toothNumber).length;
+      if (proceduresCount > 0) {
+        return "bg-green-200 border-green-500 ring-2 ring-green-300";
+      }
       return "bg-indigo-200 border-indigo-500 ring-2 ring-indigo-300";
     }
     return "bg-white border-gray-300 hover:bg-gray-50";
@@ -159,7 +172,7 @@ const ToothChart = ({
                       );
 
                     const isSelected = selectedTeeth.includes(tooth.number);
-                    const condition = toothConditions[tooth.number];
+                    const procedures = getProceduresForTooth(tooth.number);
 
                     return (
                       <td
@@ -177,16 +190,17 @@ const ToothChart = ({
                           <span className="text-xs text-gray-600">
                             {tooth.name}
                           </span>
-                          {condition && (
-                            <span className="text-xs mt-1 px-1 py-0.5 bg-white rounded">
-                              {TOOTH_CONDITIONS.find(
-                                (c) => c.value === condition
-                              )?.label || condition}
-                            </span>
-                          )}
                           {isSelected && (
                             <span className="text-xs mt-1 text-indigo-700 font-semibold">
                               Selected
+                            </span>
+                          )}
+                          {procedures.length > 0 && (
+                            <span className="text-xs mt-1 px-1 py-0.5 bg-green-100 text-green-800 rounded font-semibold">
+                              {procedures.length}{" "}
+                              {procedures.length === 1
+                                ? "Procedure"
+                                : "Procedures"}
                             </span>
                           )}
                         </div>
@@ -200,106 +214,116 @@ const ToothChart = ({
         </table>
       </div>
 
-      {/* Selected Teeth Summary with Condition Selection */}
+      {/* Selected Teeth Summary with Procedures Performed */}
       {selectedTeeth.length > 0 && (
         <div className="mt-4 p-4 bg-indigo-50 rounded-lg">
           <div className="font-semibold text-sm text-indigo-900 mb-3">
-            Selected Teeth ({selectedTeeth.length}) - Select Condition:
+            Selected Teeth ({selectedTeeth.length}) - Procedures Performed:
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="space-y-4">
             {selectedTeeth.map((toothNumber) => {
               const tooth = teeth.find(
                 (t) => t.number === parseInt(toothNumber)
               );
-              const currentCondition = toothConditions[toothNumber] || "";
+              const procedures = getProceduresForTooth(toothNumber);
 
               if (!tooth) return null;
 
               return (
                 <div
                   key={toothNumber}
-                  className="bg-white p-3 rounded-lg border border-gray-200"
+                  className="bg-white p-4 rounded-lg border border-gray-200"
                 >
-                  <div className="font-medium text-sm text-gray-900 mb-2">
-                    {tooth.number} - {tooth.name}
+                  <div className="flex justify-between items-center mb-3">
+                    <div className="font-medium text-base text-gray-900">
+                      {primaryDiagnosis && (
+                        <span className="text-indigo-700 font-semibold">
+                          Primary:{" "}
+                        </span>
+                      )}
+                      {!primaryDiagnosis &&
+                        secondaryDiagnoses &&
+                        secondaryDiagnoses.length > 0 && (
+                          <span className="text-indigo-700 font-semibold">
+                            Secondary:{" "}
+                          </span>
+                        )}
+                      Tooth {tooth.number} - {tooth.name}
+                    </div>
+                    {onProcedureSelectForTooth && (
+                      <div className="flex-1 max-w-xs ml-4">
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              onProcedureSelectForTooth(
+                                toothNumber,
+                                e.target.value
+                              );
+                              e.target.value = ""; // Reset selector
+                            }
+                          }}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="">Select Procedure...</option>
+                          {PROCEDURE_CATEGORIES.map((category) => (
+                            <optgroup key={category} label={category}>
+                              {DENTAL_PROCEDURES.filter(
+                                (p) => p.category === category
+                              ).map((proc) => (
+                                <option key={proc.name} value={proc.name}>
+                                  {proc.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
-                  {onConditionChange && (
-                    <select
-                      value={currentCondition}
-                      onChange={(e) => {
-                        const newConditions = {
-                          ...toothConditions,
-                          [toothNumber]: e.target.value || undefined,
-                        };
-                        // Remove undefined values
-                        Object.keys(newConditions).forEach((key) => {
-                          if (newConditions[key] === undefined) {
-                            delete newConditions[key];
-                          }
-                        });
-                        onConditionChange(newConditions);
-                      }}
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="">Select condition...</option>
-                      {TOOTH_CONDITIONS.map((condition) => (
-                        <option key={condition.value} value={condition.value}>
-                          {condition.label}
-                        </option>
+
+                  {procedures.length === 0 ? (
+                    <p className="text-sm text-gray-500 italic">
+                      No procedures performed on this tooth
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {procedures.map((procedure, index) => (
+                        <div
+                          key={index}
+                          className="border-l-4 border-indigo-500 pl-4 py-2 bg-gray-50 rounded-r"
+                        >
+                          <div className="font-semibold text-sm text-gray-900 mb-1">
+                            {procedure.name || "-"}
+                          </div>
+                          {procedure.description && (
+                            <div className="text-sm text-gray-700 mb-1">
+                              <span className="font-medium">Description:</span>{" "}
+                              {procedure.description}
+                            </div>
+                          )}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-600">
+                            {procedure.duration && (
+                              <div>
+                                <span className="font-medium">Duration:</span>{" "}
+                                {procedure.duration} min
+                              </div>
+                            )}
+                            {procedure.anesthesia && (
+                              <div>
+                                <span className="font-medium">Anesthesia:</span>{" "}
+                                {procedure.anesthesia}
+                              </div>
+                            )}
+                          </div>
+                          {procedure.notes && (
+                            <div className="text-sm text-gray-700 mt-2">
+                              <span className="font-medium">Notes:</span>{" "}
+                              {procedure.notes}
+                            </div>
+                          )}
+                        </div>
                       ))}
-                    </select>
-                  )}
-                  {currentCondition && (
-                    <div className="mt-2">
-                      <span
-                        className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                          TOOTH_CONDITIONS.find(
-                            (c) => c.value === currentCondition
-                          )?.color === "green"
-                            ? "bg-green-200 text-green-800"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "red"
-                            ? "bg-red-200 text-red-800"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "blue"
-                            ? "bg-blue-200 text-blue-800"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "gray"
-                            ? "bg-gray-300 text-gray-800"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "black"
-                            ? "bg-black text-white"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "orange"
-                            ? "bg-orange-200 text-orange-800"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "yellow"
-                            ? "bg-yellow-200 text-yellow-800"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "purple"
-                            ? "bg-purple-200 text-purple-800"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "indigo"
-                            ? "bg-indigo-200 text-indigo-800"
-                            : TOOTH_CONDITIONS.find(
-                                (c) => c.value === currentCondition
-                              )?.color === "pink"
-                            ? "bg-pink-200 text-pink-800"
-                            : "bg-teal-200 text-teal-800"
-                        }`}
-                      >
-                        {TOOTH_CONDITIONS.find(
-                          (c) => c.value === currentCondition
-                        )?.label || currentCondition}
-                      </span>
                     </div>
                   )}
                 </div>

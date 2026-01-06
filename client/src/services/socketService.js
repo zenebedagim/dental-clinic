@@ -19,7 +19,10 @@ const initializeSocket = () => {
 
   const token = localStorage.getItem('token');
   if (!token) {
-    console.warn('No token found, cannot initialize socket');
+    // Only log in development mode to reduce noise
+    if (import.meta.env.DEV) {
+      console.debug('No token found, cannot initialize socket');
+    }
     return null;
   }
 
@@ -51,10 +54,17 @@ const initializeSocket = () => {
   });
 
   socket.on('connect_error', (error) => {
-    console.error('Socket connection error:', error);
     reconnectAttempts++;
+    // Only log errors in development mode or if it's not a connection refused error
+    if (import.meta.env.DEV && reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+      console.debug('Socket connection error:', error.message);
+    }
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      console.error('Max reconnection attempts reached');
+      // Stop trying to reconnect after max attempts
+      socket.disconnect();
+      if (import.meta.env.DEV) {
+        console.debug('Max reconnection attempts reached. WebSocket server may be unavailable.');
+      }
     }
   });
 
@@ -68,7 +78,9 @@ const initializeSocket = () => {
   });
 
   socket.on('reconnect_failed', () => {
-    console.error('Socket reconnection failed');
+    if (import.meta.env.DEV) {
+      console.debug('Socket reconnection failed. WebSocket server may be unavailable.');
+    }
   });
 
   return socket;

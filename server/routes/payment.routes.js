@@ -6,6 +6,8 @@ const {
   getPayments,
   getPaymentByAppointment,
   toggleDetailedBilling,
+  getPaymentStats,
+  generateReceipt,
 } = require("../controllers/payment.controller");
 const authMiddleware = require("../middleware/auth.middleware");
 const checkRole = require("../middleware/role.middleware");
@@ -22,7 +24,7 @@ const {
 router.post(
   "/",
   authMiddleware,
-  checkRole("RECEPTION"),
+  checkRole("RECEPTION", "DENTIST"),
   validateCreatePayment,
   validate,
   createPayment
@@ -62,6 +64,22 @@ router.put(
   validateToggleDetailedBilling,
   validate,
   toggleDetailedBilling
+);
+
+router.get(
+  "/stats",
+  authMiddleware,
+  checkRole("ADMIN", "RECEPTION"),
+  getPaymentStats
+);
+
+router.get(
+  "/:id/receipt",
+  authMiddleware,
+  checkRole("ADMIN", "RECEPTION", "DENTIST"),
+  validatePaymentId,
+  validate,
+  generateReceipt
 );
 
 module.exports = router;

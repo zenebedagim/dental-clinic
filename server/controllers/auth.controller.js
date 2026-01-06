@@ -2,6 +2,9 @@ const prisma = require("../config/db");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { sendSuccess, sendError } = require("../utils/response.util");
+const { logLogin } = require("../middleware/audit.middleware");
+const auditService = require("../services/audit.service");
+const { clearRateLimit } = require("../middleware/rateLimiter");
 require("dotenv").config();
 
 const login = async (req, res) => {
@@ -43,10 +46,23 @@ const login = async (req, res) => {
 
     if (!isPasswordValid) {
       console.log(`Login attempt failed: Invalid password for user: ${normalizedEmail}`);
+      // Log failed login attempt
+      logLogin(user.id, req, false).catch((err) => {
+        console.error("Error logging failed login:", err);
+      });
       return sendError(res, "Invalid email or password", 401);
     }
 
     console.log(`Login successful for user: ${normalizedEmail}`);
+
+    // Clear rate limit on successful login (allow immediate re-login if needed)
+    const ip = req.ip || req.connection.remoteAddress || "unknown";
+    clearRateLimit(ip);
+
+    // Log successful login
+    logLogin(user.id, req, true).catch((err) => {
+      console.error("Error logging login:", err);
+    });
 
     const token = jwt.sign(
       {
@@ -114,6 +130,20 @@ const register = async (req, res) => {
         role: true,
         branchId: true,
       },
+    });
+
+    // Log audit action
+    await auditService.logAction(
+      req.user.id,
+      "CREATE",
+      "User",
+      user.id,
+      null,
+      { name, email, role, branchId },
+      req,
+      branchId
+    ).catch((err) => {
+      console.error("Error logging user creation:", err);
     });
 
     return sendSuccess(res, user, 201, "User created successfully");

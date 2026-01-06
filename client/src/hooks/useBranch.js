@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 const STORAGE_KEY = "selectedBranch";
 
@@ -7,21 +7,23 @@ const STORAGE_KEY = "selectedBranch";
  * @returns {Object} { selectedBranch, setSelectedBranch, clearSelectedBranch }
  */
 export const useBranch = () => {
-  const [selectedBranch, setSelectedBranchState] = useState(null);
-
-  // Load selected branch from localStorage on mount
-  useEffect(() => {
+  // Load selected branch from localStorage on mount using lazy initialization
+  const [selectedBranch, setSelectedBranchState] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       try {
-        const branch = JSON.parse(stored);
-        setSelectedBranchState(branch);
+        return JSON.parse(stored);
       } catch (error) {
-        console.error("Error parsing selected branch from localStorage:", error);
+        console.error(
+          "Error parsing selected branch from localStorage:",
+          error
+        );
         localStorage.removeItem(STORAGE_KEY);
+        return null;
       }
     }
-  }, []);
+    return null;
+  });
 
   /**
    * Set the selected branch and save to localStorage
@@ -61,4 +63,3 @@ export const useBranch = () => {
 };
 
 export default useBranch;
-

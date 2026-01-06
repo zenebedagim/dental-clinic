@@ -1,8 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import api from "../../../services/api";
 import { useToast } from "../../../hooks/useToast";
 import XrayImageViewer from "../../common/XrayImageViewer";
-import XrayShareModal from "./XrayShareModal";
 import { XRAY_TYPES } from "../../../utils/dentalConstants";
 
 const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
@@ -17,7 +16,14 @@ const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
   const [success, setSuccess] = useState("");
   const [xrayResult, setXrayResult] = useState(null);
   const [refreshImages, setRefreshImages] = useState(0);
-  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [showSendModal, setShowSendModal] = useState(false);
+  const [branches, setBranches] = useState([]);
+  const [allDentists, setAllDentists] = useState([]);
+  const [dentists, setDentists] = useState([]);
+  const [selectedBranchId, setSelectedBranchId] = useState("");
+  const [selectedDentistId, setSelectedDentistId] = useState("");
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [loadingDentists, setLoadingDentists] = useState(false);
 
   useEffect(() => {
     if (appointment?.xrayResult) {
@@ -40,6 +46,67 @@ const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
       setRefreshImages(0);
     }
   }, [appointment]);
+
+  const fetchBranches = useCallback(async () => {
+    try {
+      setLoadingBranches(true);
+      const response = await api.get("/branches");
+      const branchesData = response.data?.data || response.data || [];
+      const activeBranches = branchesData.filter((branch) => branch.isActive);
+      setBranches(activeBranches);
+    } catch (err) {
+      console.error("Error fetching branches:", err);
+      showError("Failed to load branches");
+    } finally {
+      setLoadingBranches(false);
+    }
+  }, [showError]);
+
+  const fetchDentists = useCallback(async () => {
+    try {
+      setLoadingDentists(true);
+      const response = await api.get("/users", {
+        params: { role: "DENTIST" },
+      });
+      const fetchedDentists = response.data?.data || response.data || [];
+      setAllDentists(fetchedDentists);
+
+      // Filter by selected branch if branch is selected
+      if (selectedBranchId) {
+        const filtered = fetchedDentists.filter(
+          (dentist) => dentist.branchId === selectedBranchId
+        );
+        setDentists(filtered);
+      } else {
+        setDentists([]);
+      }
+    } catch (err) {
+      console.error("Error fetching dentists:", err);
+      showError("Failed to load dentists");
+    } finally {
+      setLoadingDentists(false);
+    }
+  }, [selectedBranchId, showError]);
+
+  useEffect(() => {
+    if (showSendModal) {
+      fetchBranches();
+      fetchDentists();
+    }
+  }, [showSendModal, fetchBranches, fetchDentists]);
+
+  useEffect(() => {
+    if (selectedBranchId && allDentists.length > 0) {
+      const filtered = allDentists.filter(
+        (dentist) => dentist.branchId === selectedBranchId
+      );
+      setDentists(filtered);
+      setSelectedDentistId(""); // Reset dentist selection when branch changes
+    } else {
+      setDentists([]);
+      setSelectedDentistId("");
+    }
+  }, [selectedBranchId, allDentists]);
 
   const handleImageChange = (e) => {
     const files = Array.from(e.target.files);
@@ -71,13 +138,6 @@ const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Require at least one image to submit
-    if (formData.images.length === 0) {
-      setError("Please upload at least one X-Ray image");
-      showError("Please upload at least one X-Ray image");
-      return;
-    }
-
     setError("");
     setSuccess("");
     setLoading(true);
@@ -97,10 +157,12 @@ const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
         submitData.append("result", formData.result.trim());
       }
 
-      // Append multiple images
-      formData.images.forEach((image) => {
-        submitData.append("images", image);
-      });
+      // Append multiple images (if any)
+      if (formData.images.length > 0) {
+        formData.images.forEach((image) => {
+          submitData.append("images", image);
+        });
+      }
 
       const response = await api.post("/xray", submitData, {
         headers: {
@@ -138,13 +200,13 @@ const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
       return;
     }
 
-    if (!appointment) {
-      showError("Appointment information is required to send to dentist");
+    if (!selectedBranchId) {
+      showError("Please select a branch");
       return;
     }
 
-    if (!appointment.dentistId) {
-      showError("No dentist assigned to this appointment");
+    if (!selectedDentistId) {
+      showError("Please select a dentist");
       return;
     }
 
@@ -153,13 +215,20 @@ const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
     setSuccess("");
 
     try {
-      await api.put(`/xray/${xrayResult.id}/send`);
+      // Always send dentistId since we validate it's required before this point
+      await api.put(`/xray/${xrayResult.id}/send`, {
+        dentistId: selectedDentistId,
+      });
+      const selectedDentist = dentists.find((d) => d.id === selectedDentistId);
       setSuccess("X-Ray result sent to dentist successfully!");
       showSuccess(
         `X-Ray result sent to dentist ${
-          appointment.dentist?.name || ""
+          selectedDentist?.name || "dentist"
         } successfully!`
       );
+      setShowSendModal(false);
+      setSelectedBranchId("");
+      setSelectedDentistId("");
       if (onResultSaved) {
         onResultSaved();
       }
@@ -198,6 +267,142 @@ const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
             : "X-Ray Result Form"}
         </h2>
       </div>
+
+      {/* Clinical Information from Dentist */}
+      {appointment?.treatment && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 md:p-6 mb-4">
+          <h3 className="text-lg md:text-xl font-semibold text-indigo-900 mb-4">
+            Clinical Information from Dentist
+          </h3>
+          <div className="space-y-4">
+            {appointment.treatment.chiefComplaint && (
+              <div>
+                <p className="text-sm font-medium text-indigo-700 mb-1">
+                  Chief Complaint
+                </p>
+                <p className="text-base text-gray-900 bg-white p-3 rounded border border-indigo-100">
+                  {appointment.treatment.chiefComplaint}
+                </p>
+              </div>
+            )}
+            {appointment.treatment.historyPresentIllness && (
+              <div>
+                <p className="text-sm font-medium text-indigo-700 mb-1">
+                  History of Present Illness
+                </p>
+                <p className="text-base text-gray-900 bg-white p-3 rounded border border-indigo-100 whitespace-pre-wrap">
+                  {appointment.treatment.historyPresentIllness}
+                </p>
+              </div>
+            )}
+            {appointment.treatment.medicalHistory && (
+              <div>
+                <p className="text-sm font-medium text-indigo-700 mb-1">
+                  Medical History
+                </p>
+                <p className="text-base text-gray-900 bg-white p-3 rounded border border-indigo-100 whitespace-pre-wrap">
+                  {appointment.treatment.medicalHistory}
+                </p>
+              </div>
+            )}
+            {appointment.treatment.dentalHistory && (
+              <div>
+                <p className="text-sm font-medium text-indigo-700 mb-1">
+                  Dental History
+                </p>
+                <p className="text-base text-gray-900 bg-white p-3 rounded border border-indigo-100 whitespace-pre-wrap">
+                  {appointment.treatment.dentalHistory}
+                </p>
+              </div>
+            )}
+            {appointment.treatment.clinicalExam && (
+              <div>
+                <p className="text-sm font-medium text-indigo-700 mb-1">
+                  Provisional Findings / Impression
+                </p>
+                <p className="text-base text-gray-900 bg-white p-3 rounded border border-indigo-100 whitespace-pre-wrap">
+                  {typeof appointment.treatment.clinicalExam === "object"
+                    ? appointment.treatment.clinicalExam.provisionalFindings ||
+                      "See clinical examination details"
+                    : appointment.treatment.clinicalExam}
+                </p>
+              </div>
+            )}
+            {appointment.treatment.diagnosisCode && (
+              <div>
+                <p className="text-sm font-medium text-indigo-700 mb-1">
+                  Diagnosis
+                </p>
+                <p className="text-base text-gray-900 bg-white p-3 rounded border border-indigo-100">
+                  <span className="font-semibold">
+                    {appointment.treatment.diagnosisCode}
+                  </span>
+                  {appointment.treatment.diagnosis && (
+                    <span className="ml-2">
+                      - {appointment.treatment.diagnosis}
+                    </span>
+                  )}
+                </p>
+              </div>
+            )}
+            {appointment.treatment.treatmentPlan && (
+              <div>
+                <p className="text-sm font-medium text-indigo-700 mb-1">
+                  Treatment Plan
+                </p>
+                <p className="text-base text-gray-900 bg-white p-3 rounded border border-indigo-100 whitespace-pre-wrap">
+                  {appointment.treatment.treatmentPlan}
+                </p>
+              </div>
+            )}
+            {appointment.treatment.affectedTeeth &&
+              Array.isArray(appointment.treatment.affectedTeeth) &&
+              appointment.treatment.affectedTeeth.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-indigo-700 mb-1">
+                    Affected Teeth
+                  </p>
+                  <p className="text-base text-gray-900 bg-white p-3 rounded border border-indigo-100">
+                    {appointment.treatment.affectedTeeth.join(", ")}
+                  </p>
+                </div>
+              )}
+            {appointment.treatment.investigations && (
+              <div>
+                <p className="text-sm font-medium text-indigo-700 mb-1">
+                  Investigations Requested
+                </p>
+                <div className="bg-white p-3 rounded border border-indigo-100">
+                  {typeof appointment.treatment.investigations === "object" &&
+                  appointment.treatment.investigations.types ? (
+                    <div className="space-y-1">
+                      {appointment.treatment.investigations.types.map(
+                        (type, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-block bg-indigo-100 text-indigo-800 px-2 py-1 rounded text-sm mr-2 mb-1"
+                          >
+                            {getXrayTypeName(type)}
+                          </span>
+                        )
+                      )}
+                      {appointment.treatment.investigations.other && (
+                        <p className="text-base text-gray-900 mt-2">
+                          Other: {appointment.treatment.investigations.other}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-base text-gray-900">
+                      {JSON.stringify(appointment.treatment.investigations)}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Patient Information Display */}
       {appointment && (
@@ -380,62 +585,107 @@ const XrayResultFormEnhanced = ({ appointment, onResultSaved }) => {
         <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
           <button
             type="submit"
-            disabled={loading || formData.images.length === 0}
+            disabled={loading}
             className="flex-1 bg-indigo-600 text-white py-3 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed font-semibold min-h-[44px]"
           >
             {loading ? "Saving..." : "Save Result"}
           </button>
-          {xrayResult && !xrayResult.sentToDentist && (
+          {xrayResult && (
             <button
               type="button"
-              onClick={handleSendToDentist}
-              disabled={
-                loading || !xrayResult || !appointment || !appointment.dentistId
-              }
+              onClick={() => setShowSendModal(true)}
+              disabled={loading || !xrayResult}
               className="flex-1 bg-green-600 text-white py-3 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed font-semibold min-h-[44px]"
-              title={
-                !appointment
-                  ? "Appointment information is required"
-                  : !appointment.dentistId
-                  ? "No dentist assigned to this appointment"
-                  : `Send X-Ray result to ${
-                      appointment.dentist?.name || "dentist"
-                    }`
-              }
             >
-              {loading
-                ? "Sending..."
-                : `Send to ${appointment?.dentist?.name || "Dentist"}`}
-            </button>
-          )}
-          {xrayResult && xrayResult.id && (
-            <button
-              type="button"
-              onClick={() => setShareModalOpen(true)}
-              className="flex-1 bg-purple-600 text-white py-3 px-4 rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 font-semibold min-h-[44px]"
-            >
-              Share X-Ray
+              Send to Dentist
             </button>
           )}
         </div>
-
-        {xrayResult && xrayResult.sentToDentist && (
-          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
-            Result has been sent to the dentist.
-          </div>
-        )}
       </form>
 
-      {/* Share Modal */}
-      {xrayResult && xrayResult.id && (
-        <XrayShareModal
-          isOpen={shareModalOpen}
-          onClose={() => setShareModalOpen(false)}
-          xrayId={xrayResult.id}
-          onShareCreated={() => {
-            // Refresh if needed
-          }}
-        />
+      {/* Send to Dentist Modal */}
+      {showSendModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-bold mb-4">Send X-Ray to Dentist</h3>
+
+            <div className="space-y-4">
+              {/* Branch Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Select Branch *
+                </label>
+                <select
+                  value={selectedBranchId}
+                  onChange={(e) => setSelectedBranchId(e.target.value)}
+                  disabled={loadingBranches}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Select a branch...</option>
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Dentist Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Select Dentist *
+                </label>
+                <select
+                  value={selectedDentistId}
+                  onChange={(e) => setSelectedDentistId(e.target.value)}
+                  disabled={!selectedBranchId || loadingDentists}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                >
+                  <option value="">
+                    {!selectedBranchId
+                      ? "Select a branch first..."
+                      : dentists.length === 0
+                      ? "No dentists available in this branch"
+                      : "Select a dentist..."}
+                  </option>
+                  {dentists.map((dentist) => (
+                    <option key={dentist.id} value={dentist.id}>
+                      {dentist.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSendModal(false);
+                  setSelectedBranchId("");
+                  setSelectedDentistId("");
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSendToDentist}
+                disabled={
+                  loading ||
+                  !selectedBranchId ||
+                  !selectedDentistId ||
+                  loadingBranches ||
+                  loadingDentists
+                }
+                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

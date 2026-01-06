@@ -8,7 +8,7 @@ const ProcedureLogger = ({ procedures = [], onProceduresChange }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
   const [formData, setFormData] = useState({
-    code: "",
+    name: "",
     description: "",
     tooth: "",
     duration: "",
@@ -17,33 +17,24 @@ const ProcedureLogger = ({ procedures = [], onProceduresChange }) => {
   });
 
   const handleAdd = () => {
-    if (!formData.code) return;
-
-    const procedure = DENTAL_PROCEDURES.find((p) => p.code === formData.code);
-    const newProcedure = {
-      ...formData,
-      description: formData.description || procedure?.name || "",
-      duration: formData.duration ? parseInt(formData.duration) : null,
-    };
-
+    // Only update Duration, Anesthesia, and Notes when editing
     if (editingIndex !== null) {
-      // Edit existing
       const updated = [...procedures];
-      updated[editingIndex] = newProcedure;
+      updated[editingIndex] = {
+        ...updated[editingIndex], // Keep existing procedure name, description, and tooth
+        duration: formData.duration ? parseInt(formData.duration) : null,
+        anesthesia: formData.anesthesia || null,
+        notes: formData.notes || null,
+      };
       if (onProceduresChange) {
         onProceduresChange(updated);
       }
       setEditingIndex(null);
-    } else {
-      // Add new
-      if (onProceduresChange) {
-        onProceduresChange([...procedures, newProcedure]);
-      }
     }
 
     // Reset form
     setFormData({
-      code: "",
+      name: "",
       description: "",
       tooth: "",
       duration: "",
@@ -56,7 +47,7 @@ const ProcedureLogger = ({ procedures = [], onProceduresChange }) => {
   const handleEdit = (index) => {
     const procedure = procedures[index];
     setFormData({
-      code: procedure.code || "",
+      name: procedure.name || "",
       description: procedure.description || "",
       tooth: procedure.tooth || "",
       duration: procedure.duration?.toString() || "",
@@ -73,100 +64,42 @@ const ProcedureLogger = ({ procedures = [], onProceduresChange }) => {
     }
   };
 
-  const handleProcedureCodeChange = (code) => {
-    const procedure = DENTAL_PROCEDURES.find((p) => p.code === code);
-    setFormData({
-      ...formData,
-      code,
-      description: procedure?.name || formData.description,
-    });
-  };
-
   return (
     <div className="bg-white p-4 rounded-lg border border-gray-200">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">Procedures Performed</h3>
-        <button
-          type="button"
-          onClick={() => {
-            setShowAddForm(!showAddForm);
-            setEditingIndex(null);
-            setFormData({
-              code: "",
-              description: "",
-              tooth: "",
-              duration: "",
-              anesthesia: "",
-              notes: "",
-            });
-          }}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
-        >
-          {showAddForm ? "Cancel" : "+ Add Procedure"}
-        </button>
+        {procedures.length > 0 && (
+          <p className="text-sm text-gray-600">
+            Click "Edit" on a procedure to add Duration, Anesthesia, and Notes
+          </p>
+        )}
       </div>
 
-      {/* Add/Edit Form */}
-      {showAddForm && (
+      {/* Edit Form - Only for adding Duration, Anesthesia, and Notes */}
+      {showAddForm && editingIndex !== null && (
         <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <h4 className="font-semibold mb-3">
-            {editingIndex !== null ? "Edit Procedure" : "Add New Procedure"}
-          </h4>
+          <h4 className="font-semibold mb-3">Add Details for Procedure</h4>
+          {/* Show Procedure and Tooth info when editing */}
+          {editingIndex !== null && (
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div>
+                  <span className="font-medium text-gray-700">Procedure:</span>{" "}
+                  <span className="text-gray-900">
+                    {procedures[editingIndex]?.name || "-"}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-medium text-gray-700">Tooth:</span>{" "}
+                  <span className="text-gray-900">
+                    {procedures[editingIndex]?.tooth || "-"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Procedure Code *
-              </label>
-              <select
-                value={formData.code}
-                onChange={(e) => handleProcedureCodeChange(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">Select procedure...</option>
-                {PROCEDURE_CATEGORIES.map((category) => (
-                  <optgroup key={category} label={category}>
-                    {DENTAL_PROCEDURES.filter(
-                      (p) => p.category === category
-                    ).map((proc) => (
-                      <option key={proc.code} value={proc.code}>
-                        {proc.code} - {proc.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description
-              </label>
-              <input
-                type="text"
-                value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder="Procedure description"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Tooth (Optional)
-              </label>
-              <input
-                type="text"
-                value={formData.tooth}
-                onChange={(e) =>
-                  setFormData({ ...formData, tooth: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder="e.g., 14, A, 18-19"
-              />
-            </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Duration (minutes)
@@ -235,28 +168,26 @@ const ProcedureLogger = ({ procedures = [], onProceduresChange }) => {
             <button
               type="button"
               onClick={handleAdd}
-              disabled={!formData.code}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
             >
-              {editingIndex !== null ? "Update" : "Add"} Procedure
+              Update Procedure
             </button>
           </div>
         </div>
       )}
 
-      {/* Procedures Table */}
+      {/* Procedures Table - Shows all information */}
       {procedures.length === 0 ? (
         <p className="text-gray-500 text-center py-4">
-          No procedures logged. Click "Add Procedure" to add one.
+          No procedures logged. Select a procedure for a tooth to add one.
         </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-gray-100">
-                <th className="border border-gray-300 p-2 text-left">Code</th>
                 <th className="border border-gray-300 p-2 text-left">
-                  Description
+                  Procedure
                 </th>
                 <th className="border border-gray-300 p-2 text-left">Tooth</th>
                 <th className="border border-gray-300 p-2 text-left">
@@ -265,6 +196,7 @@ const ProcedureLogger = ({ procedures = [], onProceduresChange }) => {
                 <th className="border border-gray-300 p-2 text-left">
                   Anesthesia
                 </th>
+                <th className="border border-gray-300 p-2 text-left">Notes</th>
                 <th className="border border-gray-300 p-2 text-left">
                   Actions
                 </th>
@@ -273,11 +205,8 @@ const ProcedureLogger = ({ procedures = [], onProceduresChange }) => {
             <tbody>
               {procedures.map((procedure, index) => (
                 <tr key={index} className="hover:bg-gray-50">
-                  <td className="border border-gray-300 p-2 font-mono text-sm">
-                    {procedure.code}
-                  </td>
-                  <td className="border border-gray-300 p-2">
-                    {procedure.description}
+                  <td className="border border-gray-300 p-2 font-medium">
+                    {procedure.name || procedure.code || "-"}
                   </td>
                   <td className="border border-gray-300 p-2">
                     {procedure.tooth || "-"}
@@ -287,6 +216,9 @@ const ProcedureLogger = ({ procedures = [], onProceduresChange }) => {
                   </td>
                   <td className="border border-gray-300 p-2">
                     {procedure.anesthesia || "-"}
+                  </td>
+                  <td className="border border-gray-300 p-2">
+                    {procedure.notes || "-"}
                   </td>
                   <td className="border border-gray-300 p-2">
                     <div className="flex gap-2">
