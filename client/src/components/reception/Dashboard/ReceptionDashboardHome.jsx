@@ -5,7 +5,7 @@ import useBranch from "../../../hooks/useBranch";
 import { useToast } from "../../../hooks/useToast";
 import { useReception } from "../../../context/ReceptionContext";
 import DataTable from "../../common/DataTable";
-import { formatDate } from "../shared/DateFormatter";
+import { formatDate } from "../Shared/DateFormatter";
 import SkeletonLoader from "../../common/SkeletonLoader";
 
 const ReceptionDashboardHome = () => {

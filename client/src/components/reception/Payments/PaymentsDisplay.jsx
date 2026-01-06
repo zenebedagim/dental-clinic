@@ -5,12 +5,12 @@ import useBranch from "../../../hooks/useBranch";
 import usePatient from "../../../hooks/usePatient";
 import DataTable from "../../common/DataTable";
 import PaymentModal from "./PaymentModal";
-import { formatDate } from "../shared/DateFormatter";
+import { formatDate } from "../Shared/DateFormatter";
 import {
   formatCurrency,
   toNumber,
   formatPaymentStatus,
-} from "../shared/PaymentFormatter";
+} from "../Shared/PaymentFormatter";
 import requestCache from "../../../utils/requestCache";
 
 const PaymentsDisplay = () => {

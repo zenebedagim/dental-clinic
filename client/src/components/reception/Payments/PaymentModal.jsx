@@ -6,7 +6,7 @@ import {
   formatCurrency,
   toNumber,
   formatPaymentStatus,
-} from "../shared/PaymentFormatter";
+} from "../Shared/PaymentFormatter";
 
 const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
   const { canViewDetailedBilling, isRole } = useRoleAccess();

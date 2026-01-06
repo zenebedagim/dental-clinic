@@ -7,7 +7,7 @@ import {
   formatCurrency,
   formatPaymentStatus,
   toNumber,
-} from "../shared/PaymentFormatter";
+} from "../Shared/PaymentFormatter";
 
 const PatientHistoryModal = ({ isOpen, onClose, patient }) => {
   const { selectedBranch } = useBranch();
