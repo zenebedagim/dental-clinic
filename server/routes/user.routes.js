@@ -5,6 +5,7 @@ const {
   getUserById,
   createUser,
   updateUser,
+  changeUserPassword,
   deleteUser,
   resetUserPassword,
   getUserActivityLog,
@@ -52,6 +53,13 @@ router.delete(
   authMiddleware,
   checkRole("ADMIN"),
   deleteUser
+);
+
+router.patch(
+  "/:id/change-password",
+  authMiddleware,
+  checkRole("ADMIN"),
+  changeUserPassword
 );
 
 router.patch(

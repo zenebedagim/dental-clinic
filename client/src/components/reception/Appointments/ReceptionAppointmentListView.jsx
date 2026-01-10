@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import api from "../../../services/api";
 import DataTable from "../../common/DataTable";
 import { formatDate } from "../../../utils/tableUtils";
@@ -7,10 +7,8 @@ import requestCache from "../../../utils/requestCache";
 import { exportAppointmentsToCSV } from "../../../utils/csvExporter";
 import { useToast } from "../../../hooks/useToast";
 import AppointmentRescheduleModal from "./AppointmentRescheduleModal";
-import ConfirmDialog from "../../common/ConfirmDialog";
 
 const ReceptionAppointmentListView = () => {
-  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { success: showSuccess, error: showError } = useToast();
 
@@ -42,8 +40,6 @@ const ReceptionAppointmentListView = () => {
   const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
   const [selectedAppointmentForAction, setSelectedAppointmentForAction] =
     useState(null);
-  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
 
   const abortControllerRef = useRef(null);
 
@@ -82,28 +78,79 @@ const ReceptionAppointmentListView = () => {
         skip: (page - 1) * pageSize,
       };
 
+      // Read URL params directly to ensure we use the latest values (in case state hasn't updated yet)
+      const urlStatusParam = searchParams.get("status");
+      const urlDateParam = searchParams.get("date");
+      const urlStartDateParam = searchParams.get("startDate");
+      const urlEndDateParam = searchParams.get("endDate");
+
+      // Use URL params if available, otherwise fall back to state
+      const effectiveStatusFilter = urlStatusParam || statusFilter;
+      const effectiveDateFilter = urlDateParam || dateFilter;
+      const effectiveStartDate = urlStartDateParam || startDate;
+      const effectiveEndDate = urlEndDateParam || endDate;
+
       // Add status filter if not ALL
-      if (statusFilter && statusFilter !== "ALL") {
-        params.status = statusFilter;
+      if (effectiveStatusFilter && effectiveStatusFilter !== "ALL") {
+        params.status = effectiveStatusFilter;
       }
 
       // Add date range filter (prefer startDate/endDate over single dateFilter)
-      if (startDate && endDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        params.startDate = start.toISOString();
-        params.endDate = end.toISOString();
-      } else if (dateFilter) {
+      if (effectiveStartDate && effectiveEndDate) {
+        const start = new Date(effectiveStartDate);
+        if (!isNaN(start.getTime())) {
+          start.setHours(0, 0, 0, 0);
+          const end = new Date(effectiveEndDate);
+          if (!isNaN(end.getTime())) {
+            end.setHours(23, 59, 59, 999);
+            params.startDate = start.toISOString();
+            params.endDate = end.toISOString();
+          }
+        }
+      } else if (effectiveDateFilter) {
         // Fallback to single date filter for backward compatibility
-        const filterDate = new Date(dateFilter);
-        filterDate.setHours(0, 0, 0, 0);
-        const nextDay = new Date(filterDate);
-        nextDay.setDate(nextDay.getDate() + 1);
-        params.startDate = filterDate.toISOString();
-        params.endDate = nextDay.toISOString();
+        // Handle date string in format "YYYY-MM-DD" properly
+        let filterDate;
+        if (
+          typeof effectiveDateFilter === "string" &&
+          effectiveDateFilter.match(/^\d{4}-\d{2}-\d{2}$/)
+        ) {
+          // Parse YYYY-MM-DD format correctly - use UTC to avoid timezone issues
+          // Append "T00:00:00.000Z" to ensure UTC midnight
+          filterDate = new Date(effectiveDateFilter + "T00:00:00.000Z");
+        } else {
+          filterDate = new Date(effectiveDateFilter);
+        }
+
+        if (!isNaN(filterDate.getTime())) {
+          // Set to start of day in UTC
+          const startOfDay = new Date(
+            Date.UTC(
+              filterDate.getUTCFullYear(),
+              filterDate.getUTCMonth(),
+              filterDate.getUTCDate(),
+              0,
+              0,
+              0,
+              0
+            )
+          );
+          // Set to start of next day in UTC
+          const nextDay = new Date(startOfDay);
+          nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+          params.startDate = startOfDay.toISOString();
+          params.endDate = nextDay.toISOString();
+        }
       }
+
+      // Debug logging
+      console.log("Fetching appointments with params:", {
+        ...params,
+        effectiveStatusFilter,
+        effectiveDateFilter,
+        effectiveStartDate,
+        effectiveEndDate,
+      });
 
       // Add dentist filter if provided
       if (dentistFilter) {
@@ -133,6 +180,10 @@ const ReceptionAppointmentListView = () => {
       const meta = response.data?.meta || {};
 
       console.log("Received appointments:", data.length, "appointments");
+      if (data.length === 0) {
+        console.log("No appointments found. Query params:", params);
+        console.log("Response:", response.data);
+      }
 
       // Use server-provided pagination metadata if available
       if (meta.total !== undefined) {
@@ -213,40 +264,53 @@ const ReceptionAppointmentListView = () => {
     const dentistParam = searchParams.get("dentistId");
     const patientNameParam = searchParams.get("patientName");
 
+    let hasChanges = false;
+
     if (statusParam && statusParam !== statusFilter) {
       setStatusFilter(statusParam);
+      hasChanges = true;
     }
     if (dateParam !== null && dateParam !== dateFilter) {
       setDateFilter(dateParam);
+      hasChanges = true;
     }
     if (startDateParam !== null && startDateParam !== startDate) {
       setStartDate(startDateParam);
+      hasChanges = true;
     }
     if (endDateParam !== null && endDateParam !== endDate) {
       setEndDate(endDateParam);
+      hasChanges = true;
     }
     if (dentistParam !== null && dentistParam !== dentistFilter) {
       setDentistFilter(dentistParam);
+      hasChanges = true;
     }
     if (patientNameParam !== null && patientNameParam !== patientNameSearch) {
       setPatientNameSearch(patientNameParam);
+      hasChanges = true;
+    }
+
+    // If URL params changed, reset to page 1 and trigger fetch
+    if (hasChanges) {
+      setPage(1);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  // Use ref to store latest fetchAppointments to avoid recreating event listener
+  const fetchAppointmentsRef = useRef(fetchAppointments);
+  useEffect(() => {
+    fetchAppointmentsRef.current = fetchAppointments;
+  }, [fetchAppointments]);
 
   // Initial fetch and when dependencies change
   useEffect(() => {
     fetchAppointments();
   }, [fetchAppointments]);
 
-  // Refresh when navigating to this page (e.g., after creating appointment)
-  useEffect(() => {
-    // Always fetch when location changes (user navigates to this page)
-    fetchAppointments();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname]);
-
   // Listen for appointment creation events to refresh the list
+  // Use ref to avoid recreating listener when fetchAppointments changes
   useEffect(() => {
     const handleAppointmentCreated = () => {
       // Invalidate cache
@@ -254,8 +318,8 @@ const ReceptionAppointmentListView = () => {
       // Always refresh when appointment is created
       // Reset to page 1 to show the new appointment (most recent first)
       setPage(1);
-      // Force immediate refresh
-      fetchAppointments();
+      // Use ref to call latest version of fetchAppointments
+      fetchAppointmentsRef.current();
     };
 
     window.addEventListener("appointment-created", handleAppointmentCreated);
@@ -265,7 +329,7 @@ const ReceptionAppointmentListView = () => {
         handleAppointmentCreated
       );
     };
-  }, [fetchAppointments]);
+  }, []); // Empty deps - listener only set up once
 
   // Table columns - minimal data for performance
   const columns = useMemo(
@@ -322,7 +386,6 @@ const ReceptionAppointmentListView = () => {
             PENDING: "bg-yellow-100 text-yellow-800",
             IN_PROGRESS: "bg-blue-100 text-blue-800",
             COMPLETED: "bg-green-100 text-green-800",
-            CANCELLED: "bg-red-100 text-red-800",
           };
           const colorClass = statusColors[value] || "bg-gray-100 text-gray-800";
           return (
@@ -350,40 +413,24 @@ const ReceptionAppointmentListView = () => {
         render: (value, row) => (
           <div className="flex gap-2">
             {row.status === "PENDING" && (
-              <>
-                <button
-                  onClick={() => handleReschedule(row)}
-                  disabled={actionLoading}
-                  className="px-2 py-1 text-xs font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-50"
-                  title="Reschedule"
-                >
-                  ↻ Reschedule
-                </button>
-                <button
-                  onClick={() => handleCancel(row)}
-                  disabled={actionLoading}
-                  className="px-2 py-1 text-xs font-medium text-white bg-red-600 rounded hover:bg-red-700 disabled:opacity-50"
-                  title="Cancel"
-                >
-                  ✕ Cancel
-                </button>
-              </>
+              <button
+                onClick={() => handleReschedule(row)}
+                className="px-2 py-1 text-xs font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-50"
+                title="Reschedule"
+              >
+                ↻ Reschedule
+              </button>
             )}
-            {row.status === "IN_PROGRESS" && (
+            {(row.status === "IN_PROGRESS" || row.status === "COMPLETED") && (
               <span className="px-2 py-1 text-xs text-gray-600 bg-gray-100 rounded">
-                In Progress
-              </span>
-            )}
-            {(row.status === "COMPLETED" || row.status === "CANCELLED") && (
-              <span className="px-2 py-1 text-xs text-gray-500 bg-gray-50 rounded">
-                {row.status}
+                {row.status === "IN_PROGRESS" ? "In Progress" : "Completed"}
               </span>
             )}
           </div>
         ),
       },
     ],
-    [actionLoading]
+    []
   );
 
   const handleReschedule = (appointment) => {
@@ -391,38 +438,15 @@ const ReceptionAppointmentListView = () => {
     setRescheduleModalOpen(true);
   };
 
-  const handleCancel = (appointment) => {
-    setSelectedAppointmentForAction(appointment);
-    setCancelDialogOpen(true);
-  };
-
-  const confirmCancel = async () => {
-    if (!selectedAppointmentForAction?.id) return;
-
-    try {
-      setActionLoading(true);
-      await api.post(`/appointments/${selectedAppointmentForAction.id}/cancel`);
-      showSuccess("Appointment cancelled successfully");
-      window.dispatchEvent(new CustomEvent("appointment-created"));
-      setCancelDialogOpen(false);
-      setSelectedAppointmentForAction(null);
-      fetchAppointments();
-    } catch (err) {
-      showError(err.response?.data?.message || "Failed to cancel appointment");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+          <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
             Appointment List
           </h1>
-          <p className="text-sm sm:text-base text-gray-600 mt-2">
+          <p className="mt-2 text-sm text-gray-600 sm:text-base">
             All your appointments -{" "}
             {totalCount > 0 ? `${totalCount}+` : "Loading..."} total
           </p>
@@ -430,11 +454,11 @@ const ReceptionAppointmentListView = () => {
       </div>
 
       {/* Filters - Optimized for slow networks */}
-      <div className="bg-white p-4 rounded-lg shadow-md">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="p-4 bg-white rounded-lg shadow-md">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {/* Status Filter */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block mb-2 text-sm font-medium text-gray-700">
               Status
             </label>
             <select
@@ -457,13 +481,12 @@ const ReceptionAppointmentListView = () => {
               <option value="PENDING">Pending</option>
               <option value="IN_PROGRESS">In Progress</option>
               <option value="COMPLETED">Completed</option>
-              <option value="CANCELLED">Cancelled</option>
             </select>
           </div>
 
           {/* Date Range - Start Date */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block mb-2 text-sm font-medium text-gray-700">
               Start Date
             </label>
             <input
@@ -486,7 +509,7 @@ const ReceptionAppointmentListView = () => {
 
           {/* Date Range - End Date */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block mb-2 text-sm font-medium text-gray-700">
               End Date
             </label>
             <input
@@ -509,7 +532,7 @@ const ReceptionAppointmentListView = () => {
 
           {/* Dentist Filter */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block mb-2 text-sm font-medium text-gray-700">
               Dentist
             </label>
             <select
@@ -538,7 +561,7 @@ const ReceptionAppointmentListView = () => {
 
           {/* Patient Name Search */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block mb-2 text-sm font-medium text-gray-700">
               Patient Name
             </label>
             <input
@@ -562,7 +585,7 @@ const ReceptionAppointmentListView = () => {
 
           {/* Page Size Selector */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block mb-2 text-sm font-medium text-gray-700">
               Page Size
             </label>
             <select
@@ -604,7 +627,7 @@ const ReceptionAppointmentListView = () => {
 
       {/* Error Message */}
       {error && (
-        <div className="p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+        <div className="p-4 text-red-700 bg-red-100 border border-red-400 rounded">
           {error}
           <button
             onClick={fetchAppointments}
@@ -617,8 +640,8 @@ const ReceptionAppointmentListView = () => {
 
       {/* Loading State */}
       {loading && appointments.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+        <div className="py-12 text-center">
+          <div className="inline-block w-8 h-8 border-b-2 border-indigo-600 rounded-full animate-spin"></div>
           <p className="mt-2 text-gray-500">Loading appointments...</p>
           <p className="mt-1 text-xs text-gray-400">
             Please wait, this may take a moment on slow networks
@@ -641,7 +664,7 @@ const ReceptionAppointmentListView = () => {
           />
 
           {/* Custom Pagination Controls - Optimized for slow networks */}
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-md">
+          <div className="flex flex-col items-center justify-between gap-4 p-4 bg-white rounded-lg shadow-md sm:flex-row">
             <div className="text-sm text-gray-600">
               Showing {appointments.length} appointment
               {appointments.length !== 1 ? "s" : ""}
@@ -697,9 +720,9 @@ const ReceptionAppointmentListView = () => {
 
           {/* Network Status Indicator */}
           {loading && appointments.length > 0 && (
-            <div className="text-center py-2">
+            <div className="py-2 text-center">
               <div className="inline-flex items-center text-sm text-gray-500">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600 mr-2"></div>
+                <div className="w-4 h-4 mr-2 border-b-2 border-indigo-600 rounded-full animate-spin"></div>
                 Loading more...
               </div>
             </div>
@@ -718,24 +741,6 @@ const ReceptionAppointmentListView = () => {
         onSuccess={() => {
           fetchAppointments();
         }}
-      />
-
-      {/* Cancel Confirmation Dialog */}
-      <ConfirmDialog
-        isOpen={cancelDialogOpen}
-        onClose={() => {
-          setCancelDialogOpen(false);
-          setSelectedAppointmentForAction(null);
-        }}
-        onConfirm={confirmCancel}
-        title="Cancel Appointment"
-        message={`Are you sure you want to cancel the appointment for ${
-          selectedAppointmentForAction?.patientName || "this patient"
-        }?`}
-        confirmText="Cancel Appointment"
-        cancelText="Keep Appointment"
-        confirmButtonClass="bg-red-600 hover:bg-red-700"
-        loading={actionLoading}
       />
     </div>
   );

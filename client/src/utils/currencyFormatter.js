@@ -1,6 +1,6 @@
 /**
  * Configurable currency formatter
- * Replaces hardcoded USD currency formatting
+ * Replaces hardcoded ETB currency formatting
  */
 
 // Get currency from config or localStorage
@@ -17,8 +17,8 @@ const getCurrency = () => {
     return envCurrency;
   }
 
-  // Default to USD
-  return "USD";
+  // Default to ETB
+  return "ETB";
 };
 
 // Get locale from config or localStorage
@@ -33,7 +33,7 @@ const getLocale = () => {
     return envLocale;
   }
 
-  return "en-US";
+  return "en-ET";
 };
 
 /**

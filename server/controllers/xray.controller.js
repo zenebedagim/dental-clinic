@@ -233,7 +233,6 @@ const uploadXrayResult = async (req, res) => {
           },
         });
 
-
         return sendSuccess(
           res,
           refreshedResult,
@@ -283,7 +282,6 @@ const uploadXrayResult = async (req, res) => {
         },
       });
 
-
       return sendSuccess(
         res,
         updatedXray,
@@ -310,7 +308,7 @@ const getXrayRequests = async (req, res) => {
     const { branchId: selectedBranchId, filter } = req.query;
 
     const where = {};
-    
+
     // For ADMIN: show all X-Ray requests (no xrayId filter)
     // For XRAY: show only their own requests
     if (role !== "ADMIN") {
@@ -344,10 +342,7 @@ const getXrayRequests = async (req, res) => {
             email: true,
           },
         },
-        treatments: {
-          orderBy: { createdAt: 'desc' },
-          take: 1, // Get only the most recent treatment
-        },
+        // Removed treatments - X-ray doctors should only see form data, not treatment information
         xrayResult: {
           include: {
             images: {
@@ -359,13 +354,8 @@ const getXrayRequests = async (req, res) => {
       orderBy: { date: "desc" },
     });
 
-    // Transform for backward compatibility
-    const transformedAppointments = appointments.map((appointment) => {
-      if (appointment.treatments && Array.isArray(appointment.treatments)) {
-        appointment.treatment = appointment.treatments.length > 0 ? appointment.treatments[0] : null;
-      }
-      return appointment;
-    });
+    // No need to transform - we're not including treatment data
+    const transformedAppointments = appointments;
 
     // Apply optional server-side filtering
     let filteredAppointments = transformedAppointments;

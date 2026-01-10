@@ -15,6 +15,8 @@ const DentistBillingPaymentView = () => {
     notes: "",
     isHidden: false, // false = Visible, true = Private
   });
+  const [checkingExistingPayments, setCheckingExistingPayments] =
+    useState(false);
 
   const fetchAppointments = useCallback(
     async (abortSignal) => {
@@ -98,7 +100,7 @@ const DentistBillingPaymentView = () => {
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
     const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
+    return date.toLocaleDateString("en-ET", {
       year: "numeric",
       month: "short",
       day: "numeric",
@@ -146,11 +148,15 @@ const DentistBillingPaymentView = () => {
         "Payment sent to reception successfully! You can add another payment for this appointment."
       );
 
-      // Reset only notes, keep appointment selected so user can add more payments
+      // Dispatch event to refresh reception payment list
+      window.dispatchEvent(new CustomEvent("payment-created"));
+
+      // Reset only notes, keep appointment selected and isHidden status
+      // so subsequent payments match the first payment's visibility
       setFormData({
         ...formData,
         notes: "",
-        isHidden: false,
+        // Keep isHidden status - don't reset it
       });
     } catch (err) {
       // Extract detailed error message
@@ -200,6 +206,57 @@ const DentistBillingPaymentView = () => {
   const selectedAppointment = appointments.find(
     (apt) => apt.id === formData.appointmentId
   );
+
+  // Fetch existing payments for the selected appointment to detect visibility status
+  useEffect(() => {
+    const checkExistingPayments = async () => {
+      if (!formData.appointmentId || !selectedBranch?.id) {
+        return;
+      }
+
+      try {
+        setCheckingExistingPayments(true);
+        // Fetch payments for this appointment
+        // Note: DENTIST role can now access /payments endpoint
+        const response = await api.get("/payments", {
+          params: {
+            branchId: selectedBranch.id,
+            appointmentId: formData.appointmentId,
+            limit: 100, // Get all payments for this appointment
+          },
+        });
+        const paymentsData = response.data?.data || response.data || [];
+
+        if (Array.isArray(paymentsData) && paymentsData.length > 0) {
+          // Get the oldest payment (first created) to match its visibility
+          // Sort by createdAt to get the first payment ever created
+          const sortedPayments = [...paymentsData].sort((a, b) => {
+            const dateA = new Date(a.createdAt || a.paymentDate || 0);
+            const dateB = new Date(b.createdAt || b.paymentDate || 0);
+            return dateA - dateB; // Oldest first
+          });
+          const firstPayment = sortedPayments[0];
+          const firstPaymentIsHidden = firstPayment.isHidden || false;
+
+          // Automatically set isHidden to match the first payment
+          setFormData((prev) => ({
+            ...prev,
+            isHidden: firstPaymentIsHidden,
+          }));
+        } else {
+          // No existing payments, keep current value (don't reset)
+          // This allows user to set it manually for the first payment
+        }
+      } catch (err) {
+        // If error, keep current value (don't change)
+        console.error("Error checking existing payments:", err);
+      } finally {
+        setCheckingExistingPayments(false);
+      }
+    };
+
+    checkExistingPayments();
+  }, [formData.appointmentId, selectedBranch]);
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -282,10 +339,6 @@ const DentistBillingPaymentView = () => {
                     <span className="font-medium">Date:</span>{" "}
                     {formatDate(selectedAppointment.date)}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1 italic">
-                    💡 You can create multiple payments for this appointment.
-                    Just add notes and submit again.
-                  </p>
                 </div>
               )}
             </div>
@@ -310,7 +363,7 @@ const DentistBillingPaymentView = () => {
               />
             </div>
 
-            {/* Secret Option - No labels */}
+            {/* Visibility Option */}
             <div className="flex items-center justify-end">
               <input
                 type="checkbox"
@@ -319,7 +372,8 @@ const DentistBillingPaymentView = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, isHidden: e.target.checked })
                 }
-                className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                disabled={checkingExistingPayments}
+                className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 disabled:opacity-50"
                 title=""
               />
             </div>

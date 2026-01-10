@@ -8,7 +8,7 @@
  */
 const PHONE_PATTERNS = {
   ET: {
-    // Ethiopia: 09XXXXXXXX or +2519XXXXXXXX
+    // Ethiopia: 09XXXXXXXX or +2519XXXXXXXX (10 digits starting with 09)
     pattern: /^(?:\+251|0)?9\d{8}$/,
     minLength: 9,
     maxLength: 12,
@@ -26,7 +26,7 @@ const PHONE_PATTERNS = {
       return `0${clean}`;
     },
     error:
-      "Ethiopian phone number must be 9 digits starting with 9 (e.g., 0912345678)",
+      "Ethiopian phone number must be 10 digits starting with 09 (e.g., 0911922363)",
   },
   US: {
     pattern: /^(?:\+1)?[2-9]\d{2}[2-9]\d{2}\d{4}$/,

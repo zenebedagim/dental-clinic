@@ -8,7 +8,14 @@ import {
   formatPaymentStatus,
 } from "../Shared/PaymentFormatter";
 
-const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
+const PaymentModal = ({
+  isOpen,
+  onClose,
+  appointment,
+  allPatientPayments = [],
+  allPatientAppointments = [],
+  onPaymentSaved,
+}) => {
   const { canViewDetailedBilling, isRole } = useRoleAccess();
   const isReception = isRole("RECEPTION");
   const [formData, setFormData] = useState({
@@ -35,10 +42,92 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
 
   useEffect(() => {
     if (isOpen && appointment?.id) {
-      fetchExistingPayment();
+      // If allPatientPayments is provided, use it to show all payment history
+      if (allPatientPayments && allPatientPayments.length > 0) {
+        setExistingPayments(allPatientPayments);
+
+        // Sort payments by creation date (oldest first)
+        const sortedPayments = [...allPatientPayments].sort(
+          (a, b) =>
+            new Date(a.createdAt || a.paymentDate) -
+            new Date(b.createdAt || b.paymentDate)
+        );
+
+        // Calculate totals across all appointments
+        // Group by appointment to avoid double-counting amounts
+        const appointmentAmounts = new Map();
+        sortedPayments.forEach((payment) => {
+          if (!appointmentAmounts.has(payment.appointmentId)) {
+            appointmentAmounts.set(
+              payment.appointmentId,
+              toNumber(payment.amount)
+            );
+          }
+        });
+        const totalAmount = Array.from(appointmentAmounts.values()).reduce(
+          (sum, amt) => sum + amt,
+          0
+        );
+        const totalPaidAmount = sortedPayments.reduce(
+          (sum, p) => sum + toNumber(p.paidAmount),
+          0
+        );
+
+        // Use the first payment for form defaults
+        const firstPayment = sortedPayments[0];
+        setFormData({
+          amount: totalAmount.toString(),
+          paidAmount: totalPaidAmount.toString(),
+          paymentStatus:
+            totalPaidAmount >= totalAmount
+              ? "PAID"
+              : totalPaidAmount > 0
+              ? "PARTIAL"
+              : "UNPAID",
+          paymentMethod: firstPayment.paymentMethod || "",
+          notes: "",
+          isHidden: false,
+        });
+
+        // Build payment history table from all payments
+        const history = sortedPayments.map((payment, index) => {
+          // Try to find appointment date from allPatientAppointments
+          const relatedAppointment = allPatientAppointments.find(
+            (apt) => apt.id === payment.appointmentId
+          );
+          const appointmentDate =
+            payment.appointment?.date ||
+            payment.appointment?.createdAt ||
+            relatedAppointment?.date ||
+            relatedAppointment?.createdAt;
+
+          return {
+            id: payment.id,
+            number: index + 1,
+            date: payment.createdAt || payment.paymentDate,
+            amount: toNumber(payment.amount),
+            paidAmount: toNumber(payment.paidAmount),
+            paymentStatus: payment.paymentStatus,
+            paymentMethod: payment.paymentMethod || "N/A",
+            notes: payment.notes || "",
+            isHidden: payment.isHidden || false,
+            appointmentId: payment.appointmentId,
+            appointmentDate: appointmentDate,
+          };
+        });
+
+        setPaymentHistory(history);
+      } else {
+        // Otherwise, fetch payments for the single appointment (original behavior)
+        fetchExistingPayment();
+      }
+
       // Set default amount from treatment if available
       const treatmentCost = appointment.treatment?.totalCost;
-      if (treatmentCost) {
+      if (
+        treatmentCost &&
+        (!allPatientPayments || allPatientPayments.length === 0)
+      ) {
         setFormData((prev) => ({
           ...prev,
           amount: treatmentCost.toString(),
@@ -68,7 +157,7 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, appointment]);
+  }, [isOpen, appointment, allPatientPayments, allPatientAppointments]);
 
   const fetchExistingPayment = async () => {
     if (!appointment?.id) return;
@@ -302,12 +391,17 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
     return date.toLocaleString();
   };
 
+  const isShowingAllPatientHistory =
+    allPatientPayments && allPatientPayments.length > 0;
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title={
-        existingPayments.length > 0
+        isShowingAllPatientHistory
+          ? `Complete Payment History - ${appointment.patientName}`
+          : existingPayments.length > 0
           ? "Payment History & Add Payment"
           : "Create Payment"
       }
@@ -325,8 +419,27 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
               <p className="text-base font-semibold text-gray-900">
                 {appointment.patientName}
               </p>
+              {isShowingAllPatientHistory &&
+                allPatientAppointments.length > 1 && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Showing all payments across {allPatientAppointments.length}{" "}
+                    appointment(s)
+                  </p>
+                )}
             </div>
-            {treatmentCost && (
+            {isShowingAllPatientHistory ? (
+              <div>
+                <p className="text-xs font-medium text-gray-600">
+                  Total Amount (All Appointments)
+                </p>
+                <p className="text-base font-semibold text-indigo-600">
+                  {formatCurrency(totalAmount)}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Paid: {formatCurrency(totalPaidAmount)}
+                </p>
+              </div>
+            ) : treatmentCost ? (
               <div>
                 <p className="text-xs font-medium text-gray-600">
                   Treatment Cost
@@ -335,7 +448,7 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
                   {formatCurrency(treatmentCost)}
                 </p>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -365,11 +478,7 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
             />
             {treatmentCost && (
               <p className="text-xs text-gray-500 mt-1">
-                Suggested:{" "}
-                {new Intl.NumberFormat("en-US", {
-                  style: "currency",
-                  currency: "USD",
-                }).format(treatmentCost)}
+                Suggested: {formatCurrency(treatmentCost)}
               </p>
             )}
           </div>
@@ -487,8 +596,13 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       #
                     </th>
+                    {isShowingAllPatientHistory && (
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Appointment Date
+                      </th>
+                    )}
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date
+                      Payment Date
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Amount Paid
@@ -522,6 +636,13 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
                               {payment.number}
                             </span>
                           </td>
+                          {isShowingAllPatientHistory && (
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                              {payment.appointmentDate
+                                ? formatDate(payment.appointmentDate)
+                                : "—"}
+                            </td>
+                          )}
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                             {formatDate(payment.date)}
                           </td>
@@ -665,6 +786,13 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
                             {payment.number}
                           </span>
                         </td>
+                        {isShowingAllPatientHistory && (
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                            {payment.appointmentDate
+                              ? formatDate(payment.appointmentDate)
+                              : "—"}
+                          </td>
+                        )}
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                           {formatDate(payment.date)}
                         </td>
@@ -917,10 +1045,7 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
                                 </span>
                                 {procedure.cost && (
                                   <span className="font-medium">
-                                    {new Intl.NumberFormat("en-US", {
-                                      style: "currency",
-                                      currency: "USD",
-                                    }).format(procedure.cost)}
+                                    {formatCurrency(procedure.cost)}
                                   </span>
                                 )}
                               </li>
@@ -944,10 +1069,7 @@ const PaymentModal = ({ isOpen, onClose, appointment, onPaymentSaved }) => {
                     </h4>
                     <p className="text-lg font-bold text-indigo-600">
                       {appointment.treatment?.totalCost
-                        ? new Intl.NumberFormat("en-US", {
-                            style: "currency",
-                            currency: "USD",
-                          }).format(appointment.treatment.totalCost)
+                        ? formatCurrency(appointment.treatment.totalCost)
                         : "N/A"}
                     </p>
                   </div>

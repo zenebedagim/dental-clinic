@@ -301,6 +301,26 @@ const getReceptionAppointments = async (req, res) => {
     let total = 0;
     try {
       total = await prisma.appointment.count({ where });
+      // #region agent log
+      const fs = require("fs");
+      const path = require("path");
+      const projectRoot = path.resolve(__dirname, "../..");
+      const logPath = path.join(projectRoot, ".cursor", "debug.log");
+      const logEntry = JSON.stringify({
+        location: "appointment.controller.js:303",
+        message: "Appointment count query",
+        data: {
+          total,
+          whereClause: JSON.stringify(where),
+          hasDateFilter: !!(where.date),
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "D",
+      }) + "\n";
+      fs.appendFileSync(logPath, logEntry, "utf8");
+      // #endregion
     } catch (countError) {
       console.error("Error counting appointments:", countError);
       // If count fails, still try to fetch appointments
@@ -403,6 +423,43 @@ const getReceptionAppointments = async (req, res) => {
       console.error("Error fetching appointments:", queryError);
       console.error("Query where clause:", JSON.stringify(where, null, 2));
       throw queryError; // Re-throw to be caught by outer try-catch
+    }
+
+    // Fix appointment statuses: Update PENDING appointments that have treatments to IN_PROGRESS
+    const pendingAppointments = appointments.filter(
+      (apt) => apt.status === "PENDING"
+    );
+    if (pendingAppointments.length > 0) {
+      // Batch check which appointments have treatments
+      const appointmentIds = pendingAppointments.map((apt) => apt.id);
+      const appointmentsWithTreatments = await prisma.treatment.groupBy({
+        by: ["appointmentId"],
+        where: {
+          appointmentId: { in: appointmentIds },
+        },
+      });
+      const appointmentIdsWithTreatments = new Set(
+        appointmentsWithTreatments.map((t) => t.appointmentId)
+      );
+
+      // Update appointments that have treatments but are still PENDING
+      const updatePromises = pendingAppointments
+        .filter((apt) => appointmentIdsWithTreatments.has(apt.id))
+        .map(async (apt) => {
+          try {
+            await prisma.appointment.update({
+              where: { id: apt.id },
+              data: { status: "IN_PROGRESS" },
+            });
+            apt.status = "IN_PROGRESS"; // Update in response
+          } catch (error) {
+            // Don't fail the request if status update fails
+            console.error(`Error fixing appointment ${apt.id} status:`, error);
+          }
+        });
+
+      // Wait for all updates to complete (but don't block if some fail)
+      await Promise.allSettled(updatePromises);
     }
 
     // Attach patient data for appointments without patient relation
@@ -528,7 +585,7 @@ const updateAppointment = async (req, res) => {
   try {
     const { id: userId, role, branchId } = req.user;
     const { id } = req.params;
-    const { date, status, visitReason, xrayId, patientId, patientName } =
+    const { date, status, visitReason, xrayId, patientId, patientName, xrayType, urgency, notes } =
       req.body;
 
     const appointment = await prisma.appointment.findUnique({
@@ -557,6 +614,9 @@ const updateAppointment = async (req, res) => {
     if (status !== undefined) updateData.status = status;
     if (visitReason !== undefined) updateData.visitReason = visitReason;
     if (xrayId !== undefined) updateData.xrayId = xrayId || null;
+    if (xrayType !== undefined) updateData.xrayType = xrayType || null;
+    if (urgency !== undefined) updateData.urgency = urgency || null;
+    if (notes !== undefined) updateData.notes = notes || null;
 
     // Handle patientId update - must be valid UUID and patient must exist
     if (patientId !== undefined) {

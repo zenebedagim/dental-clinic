@@ -6,7 +6,7 @@ const ProtectedRoute = ({ children, role }) => {
 
   // No token means not authenticated
   if (!token || !userStr) {
-    return <Navigate to="/login" replace />;
+    return null; // No redirect, component won't render
   }
 
   // Parse user data
@@ -14,17 +14,17 @@ const ProtectedRoute = ({ children, role }) => {
   try {
     user = JSON.parse(userStr);
   } catch {
-    // Invalid user data, clear it and redirect to login
+    // Invalid user data, clear it
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    return <Navigate to="/login" replace />;
+    return null; // No redirect, component won't render
   }
 
   // If user data is invalid or missing role
   if (!user || !user.role) {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    return <Navigate to="/login" replace />;
+    return null; // No redirect, component won't render
   }
 
   // If role is specified and user's role doesn't match, redirect to their dashboard
@@ -34,6 +34,63 @@ const ProtectedRoute = ({ children, role }) => {
       DENTIST: "/dentist",
       XRAY: "/xray",
       ADMIN: "/admin",
+    };
+    const redirectPath = roleRoutes[user.role];
+    if (redirectPath) {
+      return <Navigate to={redirectPath} replace />;
+    }
+  }
+
+  // For ADMIN routes, verify phone number is exactly 0911922363 (admin-only restriction)
+  if (role === "ADMIN" && user.role === "ADMIN") {
+    const adminPhone = "0911922363";
+    const userPhone = user.phone || user.email || "";
+
+    // Normalize phone numbers (remove spaces)
+    const normalizedUserPhone = userPhone.replace(/\s+/g, "");
+    const normalizedAdminPhone = adminPhone.replace(/\s+/g, "");
+
+    // Check if phone matches admin phone (admin-only restriction)
+    if (normalizedUserPhone !== normalizedAdminPhone) {
+      console.warn(
+        "Unauthorized admin access attempt. Phone number does not match."
+      );
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      localStorage.removeItem("selectedBranch");
+      return <Navigate to="/login" replace />;
+    }
+
+    // Check passwordChanged flag - if false, only allow access to change-password route
+    // Check current pathname from window.location to avoid React Router dependency
+    const currentPath =
+      typeof window !== "undefined" ? window.location.pathname : "";
+
+    if (user.passwordChanged === false) {
+      // If not already on change-password route, redirect there
+      if (currentPath !== "/admin/change-password") {
+        return <Navigate to="/admin/change-password" replace />;
+      }
+      // If already on change-password route, allow access
+      return children;
+    }
+
+    // If passwordChanged is true but user tries to access change-password, redirect to dashboard
+    if (
+      user.passwordChanged === true &&
+      currentPath === "/admin/change-password"
+    ) {
+      return <Navigate to="/admin" replace />;
+    }
+  }
+  
+  // For non-admin roles, ensure they're not trying to access admin routes
+  if (role === "ADMIN" && user.role !== "ADMIN") {
+    // Non-admin user trying to access admin route - redirect to their dashboard
+    const roleRoutes = {
+      RECEPTION: "/reception",
+      DENTIST: "/dentist",
+      XRAY: "/xray",
     };
     const redirectPath = roleRoutes[user.role];
     if (redirectPath) {
@@ -53,10 +110,10 @@ const ProtectedRoute = ({ children, role }) => {
     }
     // Only redirect if branch is truly missing (shouldn't happen after login)
     if (!selectedBranch && !user.branch) {
-      console.warn("Branch not found for user, redirecting to login");
+      console.warn("Branch not found for user");
       localStorage.removeItem("token");
       localStorage.removeItem("user");
-      return <Navigate to="/login" replace />;
+      return null; // No redirect, component won't render
     }
   }
 

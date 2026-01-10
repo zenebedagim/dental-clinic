@@ -59,47 +59,51 @@ async function setupInitialData() {
     const credentials = [];
 
     // Define users per branch (multiple dentists, X-Ray doctors, and reception staff)
+    // Using phone numbers instead of email
     const usersPerBranch = [
       {
         branchIndex: 0, // Main Branch
         reception: [
           {
             name: "Reception Staff Main",
-            email: "reception.main@clinic.com",
+            phone: "0924308310",
             password: "reception123",
           },
           {
             name: "Reception Manager Main",
-            email: "reception2.main@clinic.com",
+            phone: "0924308311",
             password: "reception123",
           },
         ],
         dentists: [
           {
             name: "Dr. Smith",
-            email: "dentist.main@clinic.com",
+            phone: "0924308320",
             password: "dentist123",
+            specialization: "General Dentistry",
           },
           {
             name: "Dr. Johnson",
-            email: "dentist2.main@clinic.com",
+            phone: "0924308321",
             password: "dentist123",
+            specialization: "Orthodontics",
           },
           {
             name: "Dr. Williams",
-            email: "dentist3.main@clinic.com",
+            phone: "0924308322",
             password: "dentist123",
+            specialization: "Oral Surgery",
           },
         ],
         xray: [
           {
             name: "Dr. XRay Main",
-            email: "xray.main@clinic.com",
+            phone: "0924308330",
             password: "xray123",
           },
           {
             name: "Dr. XRay Main 2",
-            email: "xray2.main@clinic.com",
+            phone: "0924308331",
             password: "xray123",
           },
         ],
@@ -109,36 +113,40 @@ async function setupInitialData() {
         reception: [
           {
             name: "Reception Staff Downtown",
-            email: "reception.dt@clinic.com",
+            phone: "0924308340",
             password: "reception123",
           },
         ],
         dentists: [
           {
             name: "Dr. Brown",
-            email: "dentist.dt@clinic.com",
+            phone: "0924308350",
             password: "dentist123",
+            specialization: "General Dentistry",
           },
           {
             name: "Dr. Davis",
-            email: "dentist2.dt@clinic.com",
+            phone: "0924308351",
             password: "dentist123",
+            specialization: "Periodontics",
           },
           {
             name: "Dr. Miller",
-            email: "dentist3.dt@clinic.com",
+            phone: "0924308352",
             password: "dentist123",
+            specialization: "Endodontics",
           },
           {
             name: "Dr. Wilson",
-            email: "dentist4.dt@clinic.com",
+            phone: "0924308353",
             password: "dentist123",
+            specialization: "Prosthodontics",
           },
         ],
         xray: [
           {
             name: "Dr. XRay Downtown",
-            email: "xray.dt@clinic.com",
+            phone: "0924308360",
             password: "xray123",
           },
         ],
@@ -148,41 +156,44 @@ async function setupInitialData() {
         reception: [
           {
             name: "Reception Staff North",
-            email: "reception.nb@clinic.com",
+            phone: "0924308370",
             password: "reception123",
           },
           {
             name: "Reception Assistant North",
-            email: "reception2.nb@clinic.com",
+            phone: "0924308371",
             password: "reception123",
           },
         ],
         dentists: [
           {
             name: "Dr. Moore",
-            email: "dentist.nb@clinic.com",
+            phone: "0924308380",
             password: "dentist123",
+            specialization: "General Dentistry",
           },
           {
             name: "Dr. Taylor",
-            email: "dentist2.nb@clinic.com",
+            phone: "0924308381",
             password: "dentist123",
+            specialization: "Pediatric Dentistry",
           },
           {
             name: "Dr. Anderson",
-            email: "dentist3.nb@clinic.com",
+            phone: "0924308382",
             password: "dentist123",
+            specialization: "Oral Surgery",
           },
         ],
         xray: [
           {
             name: "Dr. XRay North",
-            email: "xray.nb@clinic.com",
+            phone: "0924308390",
             password: "xray123",
           },
           {
             name: "Dr. XRay North 2",
-            email: "xray2.nb@clinic.com",
+            phone: "0924308391",
             password: "xray123",
           },
         ],
@@ -192,51 +203,56 @@ async function setupInitialData() {
         reception: [
           {
             name: "Reception Staff South",
-            email: "reception.sb@clinic.com",
+            phone: "0924308400",
             password: "reception123",
           },
         ],
         dentists: [
           {
             name: "Dr. Thomas",
-            email: "dentist.sb@clinic.com",
+            phone: "0924308410",
             password: "dentist123",
+            specialization: "General Dentistry",
           },
           {
             name: "Dr. Jackson",
-            email: "dentist2.sb@clinic.com",
+            phone: "0924308411",
             password: "dentist123",
+            specialization: "Orthodontics",
           },
           {
             name: "Dr. White",
-            email: "dentist3.sb@clinic.com",
+            phone: "0924308412",
             password: "dentist123",
+            specialization: "Periodontics",
           },
           {
             name: "Dr. Harris",
-            email: "dentist4.sb@clinic.com",
+            phone: "0924308413",
             password: "dentist123",
+            specialization: "Endodontics",
           },
           {
             name: "Dr. Martin",
-            email: "dentist5.sb@clinic.com",
+            phone: "0924308414",
             password: "dentist123",
+            specialization: "Prosthodontics",
           },
         ],
         xray: [
           {
             name: "Dr. XRay South",
-            email: "xray.sb@clinic.com",
+            phone: "0924308420",
             password: "xray123",
           },
           {
             name: "Dr. XRay South 2",
-            email: "xray2.sb@clinic.com",
+            phone: "0924308421",
             password: "xray123",
           },
           {
             name: "Dr. XRay South 3",
-            email: "xray3.sb@clinic.com",
+            phone: "0924308422",
             password: "xray123",
           },
         ],
@@ -246,31 +262,33 @@ async function setupInitialData() {
         reception: [
           {
             name: "Reception Staff East",
-            email: "reception.eb@clinic.com",
+            phone: "0924308430",
             password: "reception123",
           },
           {
             name: "Reception Manager East",
-            email: "reception2.eb@clinic.com",
+            phone: "0924308431",
             password: "reception123",
           },
         ],
         dentists: [
           {
             name: "Dr. Thompson",
-            email: "dentist.eb@clinic.com",
+            phone: "0924308440",
             password: "dentist123",
+            specialization: "General Dentistry",
           },
           {
             name: "Dr. Garcia",
-            email: "dentist2.eb@clinic.com",
+            phone: "0924308441",
             password: "dentist123",
+            specialization: "Orthodontics",
           },
         ],
         xray: [
           {
             name: "Dr. XRay East",
-            email: "xray.eb@clinic.com",
+            phone: "0924308450",
             password: "xray123",
           },
         ],
@@ -285,12 +303,14 @@ async function setupInitialData() {
       // Create reception staff
       for (const userData of branchUsers.reception) {
         const hashedPassword = await bcrypt.hash(userData.password, 10);
+        // Store phone in email field (for backward compatibility)
+        const phoneValue = userData.phone.replace(/\s+/g, "");
         const user = await prisma.user.upsert({
-          where: { email: userData.email },
+          where: { email: phoneValue },
           update: {},
           create: {
             name: userData.name,
-            email: userData.email,
+            email: phoneValue, // Store phone in email field
             password: hashedPassword,
             role: "RECEPTION",
             branchId: branch.id,
@@ -302,37 +322,42 @@ async function setupInitialData() {
           role: "RECEPTION",
           branch: branch.name,
         });
-        console.log(`      ✅ Reception: ${userData.email}`);
+        console.log(`      ✅ Reception: ${userData.phone}`);
       }
 
       // Create dentists
       for (const userData of branchUsers.dentists) {
         const hashedPassword = await bcrypt.hash(userData.password, 10);
+        // Store phone in email field (for backward compatibility)
+        const phoneValue = userData.phone.replace(/\s+/g, "");
         const user = await prisma.user.upsert({
-          where: { email: userData.email },
+          where: { email: phoneValue },
           update: {},
           create: {
             name: userData.name,
-            email: userData.email,
+            email: phoneValue, // Store phone in email field
             password: hashedPassword,
             role: "DENTIST",
             branchId: branch.id,
+            specialization: userData.specialization || null,
           },
         });
         allUsers.push(user);
         credentials.push({ ...userData, role: "DENTIST", branch: branch.name });
-        console.log(`      ✅ Dentist: ${userData.email}`);
+        console.log(`      ✅ Dentist: ${userData.phone}`);
       }
 
       // Create X-Ray doctors
       for (const userData of branchUsers.xray) {
         const hashedPassword = await bcrypt.hash(userData.password, 10);
+        // Store phone in email field (for backward compatibility)
+        const phoneValue = userData.phone.replace(/\s+/g, "");
         const user = await prisma.user.upsert({
-          where: { email: userData.email },
+          where: { email: phoneValue },
           update: {},
           create: {
             name: userData.name,
-            email: userData.email,
+            email: phoneValue, // Store phone in email field
             password: hashedPassword,
             role: "XRAY",
             branchId: branch.id,
@@ -340,7 +365,7 @@ async function setupInitialData() {
         });
         allUsers.push(user);
         credentials.push({ ...userData, role: "X-Ray", branch: branch.name });
-        console.log(`      ✅ X-Ray: ${userData.email}`);
+        console.log(`      ✅ X-Ray: ${userData.phone}`);
       }
       console.log("");
     }
@@ -356,7 +381,7 @@ async function setupInitialData() {
     // Show admin credentials
     const adminCred = credentials.find((c) => c.role === "ADMIN");
     if (adminCred) {
-      console.log(`\n👑 Admin: ${adminCred.email} / ${adminCred.password}`);
+      console.log(`\n👑 Admin: ${adminCred.phone || adminCred.email} / ${adminCred.password}`);
     }
 
     // Show sample credentials from first branch
@@ -370,16 +395,16 @@ async function setupInitialData() {
 
     if (receptionMain) {
       console.log(
-        `   👩‍💼 Reception: ${receptionMain.email} / ${receptionMain.password}`
+        `   👩‍💼 Reception: ${receptionMain.phone || receptionMain.email} / ${receptionMain.password}`
       );
     }
     if (dentistMain) {
       console.log(
-        `   👨‍⚕️ Dentist: ${dentistMain.email} / ${dentistMain.password}`
+        `   👨‍⚕️ Dentist: ${dentistMain.phone || dentistMain.email} / ${dentistMain.password}`
       );
     }
     if (xrayMain) {
-      console.log(`   🩻 X-Ray: ${xrayMain.email} / ${xrayMain.password}`);
+      console.log(`   🩻 X-Ray: ${xrayMain.phone || xrayMain.email} / ${xrayMain.password}`);
     }
 
     console.log(

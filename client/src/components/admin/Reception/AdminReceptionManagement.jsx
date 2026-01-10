@@ -8,9 +8,9 @@ import { formatDate } from "../../../utils/tableUtils";
 
 // Helper function to format currency
 const formatCurrency = (amount) => {
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("en-ET", {
     style: "currency",
-    currency: "USD",
+    currency: "ETB",
   }).format(amount || 0);
 };
 

@@ -1,5 +1,4 @@
 import axios from "axios";
-import requestDeduplicator from "../utils/requestDeduplicator";
 import { retryWithBackoff, isRetryableError } from "../utils/retryHandler";
 
 // Ensure base URL always ends with /api
@@ -23,7 +22,6 @@ api.interceptors.request.use(
     const token = localStorage.getItem("token");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
-      
     }
     return config;
   },
@@ -102,19 +100,22 @@ api.interceptors.response.use(
         isNetworkError: !error.response,
         timestamp: Date.now(),
       };
-      fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          location: "api.js:84",
-          message: "API request failed - will retry",
-          data: errorInfo,
-          timestamp: Date.now(),
-          sessionId: "debug-session",
-          runId: "run1",
-          hypothesisId: "H1",
-        }),
-      }).catch(() => {});
+      fetch(
+        "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "api.js:84",
+            message: "API request failed - will retry",
+            data: errorInfo,
+            timestamp: Date.now(),
+            sessionId: "debug-session",
+            runId: "run1",
+            hypothesisId: "H1",
+          }),
+        }
+      ).catch(() => {});
       // #endregion
 
       try {
@@ -128,48 +129,54 @@ api.interceptors.response.use(
               error.config.url
             );
             // #region agent log
-            fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                location: "api.js:98",
-                message: `Retrying request (attempt ${attempt})`,
-                data: {
-                  url: error.config.url,
-                  attempt,
-                  retryErrorStatus: err?.response?.status || "NO_RESPONSE",
-                  retryErrorCode: err?.code,
-                  retryErrorMessage: err?.message,
-                },
-                timestamp: Date.now(),
-                sessionId: "debug-session",
-                runId: "run1",
-                hypothesisId: "H1",
-              }),
-            }).catch(() => {});
+            fetch(
+              "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "api.js:98",
+                  message: `Retrying request (attempt ${attempt})`,
+                  data: {
+                    url: error.config.url,
+                    attempt,
+                    retryErrorStatus: err?.response?.status || "NO_RESPONSE",
+                    retryErrorCode: err?.code,
+                    retryErrorMessage: err?.message,
+                  },
+                  timestamp: Date.now(),
+                  sessionId: "debug-session",
+                  runId: "run1",
+                  hypothesisId: "H1",
+                }),
+              }
+            ).catch(() => {});
             // #endregion
           },
         });
       } catch (retryError) {
         // #region agent log
-        fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "api.js:105",
-            message: "All retries failed",
-            data: {
-              url: error.config.url,
-              finalErrorStatus: retryError?.response?.status || "NO_RESPONSE",
-              finalErrorCode: retryError?.code,
-              finalErrorMessage: retryError?.message,
-            },
-            timestamp: Date.now(),
-            sessionId: "debug-session",
-            runId: "run1",
-            hypothesisId: "H1",
-          }),
-        }).catch(() => {});
+        fetch(
+          "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              location: "api.js:105",
+              message: "All retries failed",
+              data: {
+                url: error.config.url,
+                finalErrorStatus: retryError?.response?.status || "NO_RESPONSE",
+                finalErrorCode: retryError?.code,
+                finalErrorMessage: retryError?.message,
+              },
+              timestamp: Date.now(),
+              sessionId: "debug-session",
+              runId: "run1",
+              hypothesisId: "H1",
+            }),
+          }
+        ).catch(() => {});
         // #endregion
         // All retries failed, return original error
         return Promise.reject(retryError);
@@ -179,5 +186,27 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Auth API functions
+export const login = async (phone, password) => {
+  const response = await api.post("/auth/login", {
+    phone,
+    password,
+  });
+
+  // The response interceptor transforms the response:
+  // { success: true, data: { token, user } } becomes { data: { token, user } }
+  // So response.data is already { token, user }
+  if (response.data && response.data.token && response.data.user) {
+    return response.data; // { token, user }
+  }
+
+  // Fallback: check if data is nested (in case interceptor didn't transform)
+  if (response.data && response.data.success && response.data.data) {
+    return response.data.data; // { token, user }
+  }
+
+  return response.data;
+};
 
 export default api;

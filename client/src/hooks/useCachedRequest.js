@@ -59,7 +59,7 @@ export const useCachedRequest = (endpoint, options = {}) => {
           setError(null);
           if (onSuccess) onSuccess(result);
           return;
-        } catch (err) {
+        } catch {
           // If the previous request failed, continue with new request
         }
       }
@@ -143,4 +143,3 @@ export const useCacheInvalidation = () => {
 
   return { invalidate, invalidateByPrefix, clearAll };
 };
-

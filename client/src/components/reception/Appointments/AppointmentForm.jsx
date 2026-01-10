@@ -351,82 +351,18 @@ const AppointmentForm = memo(({ onAppointmentCreated }) => {
         return;
       }
 
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "AppointmentForm.jsx:354",
-            message: "before patient find/create",
-            data: {
-              patientName: formData.patientName,
-              phoneNumber: formData.phoneNumber,
-              hasPatientId: false,
-            },
-            timestamp: Date.now(),
-            sessionId: "debug-session",
-            runId: "run1",
-            hypothesisId: "H1",
-          }),
-        }
-      ).catch(() => {});
-      // #endregion
-
       // Step 1: Find or create patient
       let patientId = null;
 
       // Try to find existing patient by phone number
       if (formData.phoneNumber) {
         try {
-          // #region agent log
-          fetch(
-            "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                location: "AppointmentForm.jsx:370",
-                message: "searching for existing patient",
-                data: { phoneNumber: formData.phoneNumber },
-                timestamp: Date.now(),
-                sessionId: "debug-session",
-                runId: "run1",
-                hypothesisId: "H1",
-              }),
-            }
-          ).catch(() => {});
-          // #endregion
-
           const searchResponse = await api.get("/patients/search", {
             params: { phone: formData.phoneNumber, limit: 1 },
           });
           const existingPatients = Array.isArray(searchResponse.data)
             ? searchResponse.data
             : [];
-
-          // #region agent log
-          fetch(
-            "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                location: "AppointmentForm.jsx:385",
-                message: "patient search result",
-                data: {
-                  found: existingPatients.length > 0,
-                  patientId: existingPatients[0]?.id || null,
-                },
-                timestamp: Date.now(),
-                sessionId: "debug-session",
-                runId: "run1",
-                hypothesisId: "H1",
-              }),
-            }
-          ).catch(() => {});
-          // #endregion
 
           if (existingPatients.length > 0) {
             patientId = existingPatients[0].id;
@@ -440,28 +376,6 @@ const AppointmentForm = memo(({ onAppointmentCreated }) => {
       // Step 2: Create patient if not found
       if (!patientId) {
         try {
-          // #region agent log
-          fetch(
-            "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                location: "AppointmentForm.jsx:400",
-                message: "creating new patient",
-                data: {
-                  patientName: formData.patientName,
-                  phoneNumber: formData.phoneNumber,
-                },
-                timestamp: Date.now(),
-                sessionId: "debug-session",
-                runId: "run1",
-                hypothesisId: "H1",
-              }),
-            }
-          ).catch(() => {});
-          // #endregion
-
           // Calculate dateOfBirth from age if provided
           let dateOfBirth = null;
           if (formData.age) {
@@ -495,28 +409,6 @@ const AppointmentForm = memo(({ onAppointmentCreated }) => {
               : null) ||
             patientResponse.data?.data?.id;
 
-          // #region agent log
-          fetch(
-            "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                location: "AppointmentForm.jsx:435",
-                message: "patient created",
-                data: {
-                  patientId,
-                  patientResponse: patientResponse.data,
-                },
-                timestamp: Date.now(),
-                sessionId: "debug-session",
-                runId: "run1",
-                hypothesisId: "H1",
-              }),
-            }
-          ).catch(() => {});
-          // #endregion
-
           if (!patientId) {
             throw new Error("Failed to get patient ID from creation response");
           }
@@ -546,29 +438,6 @@ const AppointmentForm = memo(({ onAppointmentCreated }) => {
         date: new Date(appointmentDateTime).toISOString(),
         visitReason: formData.visitReason || null,
       };
-
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "AppointmentForm.jsx:465",
-            message: "sending appointment request",
-            data: {
-              patientId,
-              hasPatientId: !!patientId,
-              dataToSend,
-            },
-            timestamp: Date.now(),
-            sessionId: "debug-session",
-            runId: "run1",
-            hypothesisId: "H1",
-          }),
-        }
-      ).catch(() => {});
-      // #endregion
 
       await api.post("/appointments", dataToSend);
       showSuccess("Appointment scheduled successfully!");

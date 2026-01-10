@@ -9,7 +9,23 @@ const { logSensitiveAction } = require("../middleware/auditLogger");
 
 const createPayment = async (req, res) => {
   // #region agent log
-  fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:10',message:'createPayment entry',data:{appointmentId:req.body?.appointmentId,userId:req.user?.id,role:req.user?.role},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: "payment.controller.js:10",
+      message: "createPayment entry",
+      data: {
+        appointmentId: req.body?.appointmentId,
+        userId: req.user?.id,
+        role: req.user?.role,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "A",
+    }),
+  }).catch(() => {});
   // #endregion
   try {
     const {
@@ -23,12 +39,43 @@ const createPayment = async (req, res) => {
     } = req.body;
     const { id: userId, role, branchId } = req.user;
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:22',message:'extracted request data',data:{appointmentId,amount,paidAmount,paymentStatus,hasNotes:!!notes,isHidden},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:22",
+        message: "extracted request data",
+        data: {
+          appointmentId,
+          amount,
+          paidAmount,
+          paymentStatus,
+          hasNotes: !!notes,
+          isHidden,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "A",
+      }),
+    }).catch(() => {});
     // #endregion
 
     // Verify appointment exists
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:24',message:'before appointment query',data:{appointmentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:24",
+        message: "before appointment query",
+        data: { appointmentId },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "B",
+      }),
+    }).catch(() => {});
     // #endregion
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
@@ -46,7 +93,23 @@ const createPayment = async (req, res) => {
       },
     });
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:38',message:'after appointment query',data:{found:!!appointment,hasTreatments:!!appointment?.treatments,hasBranch:!!appointment?.branch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:38",
+        message: "after appointment query",
+        data: {
+          found: !!appointment,
+          hasTreatments: !!appointment?.treatments,
+          hasBranch: !!appointment?.branch,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "B",
+      }),
+    }).catch(() => {});
     // #endregion
 
     // Transform for backward compatibility
@@ -106,7 +169,24 @@ const createPayment = async (req, res) => {
       appointment.treatment?.totalCost?.toNumber() ||
       (amount !== undefined ? parseFloat(amount) : 0);
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:96',message:'before payment create',data:{finalAmount,appointmentId,finalPaymentStatus,paidAmount:parseFloat(paidAmount||0)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:96",
+        message: "before payment create",
+        data: {
+          finalAmount,
+          appointmentId,
+          finalPaymentStatus,
+          paidAmount: parseFloat(paidAmount || 0),
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "C",
+      }),
+    }).catch(() => {});
     // #endregion
     const payment = await prisma.payment.create({
       data: {
@@ -147,7 +227,19 @@ const createPayment = async (req, res) => {
       },
     });
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:148',message:'after payment create success',data:{paymentId:payment?.id,appointmentId:payment?.appointmentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:148",
+        message: "after payment create success",
+        data: { paymentId: payment?.id, appointmentId: payment?.appointmentId },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "C",
+      }),
+    }).catch(() => {});
     // #endregion
 
     // Transform for backward compatibility
@@ -159,6 +251,62 @@ const createPayment = async (req, res) => {
         payment.appointment.treatments.length > 0
           ? payment.appointment.treatments[0]
           : null;
+    }
+
+    // Update appointment status based on treatment and payment state
+    if (payment.appointment.treatments && payment.appointment.treatments.length > 0) {
+      try {
+        const treatments = payment.appointment.treatments;
+        const latestTreatment = treatments[0]; // Already sorted by createdAt desc
+        
+        // Get all payments for this appointment to check if fully paid
+        const allPayments = await prisma.payment.findMany({
+          where: { appointmentId: appointmentId, isHidden: false },
+        });
+
+        const totalAmount = allPayments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
+        const totalPaid = allPayments.reduce((sum, p) => sum + parseFloat(p.paidAmount || 0), 0);
+        const allPaymentsPaid = allPayments.length > 0 && totalPaid >= totalAmount;
+
+        let newStatus = appointment.status;
+
+        // If appointment is PENDING and has treatment, set to IN_PROGRESS
+        if (appointment.status === "PENDING") {
+          newStatus = "IN_PROGRESS";
+        }
+        // If treatment is COMPLETED and all payments are fully paid, set to COMPLETED
+        else if (
+          latestTreatment.status === "COMPLETED" &&
+          allPaymentsPaid &&
+          appointment.status !== "COMPLETED"
+        ) {
+          newStatus = "COMPLETED";
+        }
+
+        // Update appointment status if it changed
+        if (newStatus !== appointment.status) {
+          await prisma.appointment.update({
+            where: { id: appointmentId },
+            data: { status: newStatus },
+          });
+          payment.appointment.status = newStatus;
+        }
+      } catch (updateError) {
+        // Don't fail payment creation if status update fails
+        console.error("Error updating appointment status:", updateError);
+      }
+    } else if (appointment.status === "PENDING") {
+      // If no treatment yet but payment is made, still set to IN_PROGRESS
+      // (treatment might be created later)
+      try {
+        await prisma.appointment.update({
+          where: { id: appointmentId },
+          data: { status: "IN_PROGRESS" },
+        });
+        payment.appointment.status = "IN_PROGRESS";
+      } catch (updateError) {
+        console.error("Error updating appointment status:", updateError);
+      }
     }
 
     // Log sensitive action (non-blocking - don't fail if logging fails)
@@ -175,7 +323,26 @@ const createPayment = async (req, res) => {
     return sendSuccess(res, payment, 201, "Payment created successfully");
   } catch (error) {
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:173',message:'createPayment error caught',data:{errorMessage:error?.message,errorCode:error?.code,errorName:error?.name,prismaCode:error?.code,prismaMeta:error?.meta,stack:error?.stack?.substring(0,500)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:173",
+        message: "createPayment error caught",
+        data: {
+          errorMessage: error?.message,
+          errorCode: error?.code,
+          errorName: error?.name,
+          prismaCode: error?.code,
+          prismaMeta: error?.meta,
+          stack: error?.stack?.substring(0, 500),
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "D",
+      }),
+    }).catch(() => {});
     // #endregion
     console.error("Create payment error:", error);
     return sendError(res, "Server error", 500, error);
@@ -354,6 +521,7 @@ const getPayments = async (req, res) => {
       minAmount,
       maxAmount,
       dentistId,
+      appointmentId,
       isHidden,
       limit,
       skip,
@@ -400,6 +568,16 @@ const getPayments = async (req, res) => {
 
     if (dentistId) {
       appointmentFilter.dentistId = dentistId;
+    }
+
+    // For DENTIST role, automatically filter by their own dentistId
+    if (role === "DENTIST") {
+      appointmentFilter.dentistId = userId;
+    }
+
+    // Filter by specific appointmentId if provided
+    if (appointmentId) {
+      appointmentFilter.id = appointmentId;
     }
 
     // Receptionists can see all payments in their branch (branch-level access)
@@ -625,6 +803,69 @@ const getPayments = async (req, res) => {
       code: error.code,
       meta: error.meta,
     });
+  }
+};
+
+const getPaymentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { id: userId, role, branchId } = req.user;
+
+    // Find the payment
+    const payment = await prisma.payment.findUnique({
+      where: { id },
+      include: {
+        appointment: {
+          include: {
+            patient: {
+              select: {
+                id: true,
+                name: true,
+                phone: true,
+                email: true,
+              },
+            },
+            dentist: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            branch: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      return sendError(res, "Payment not found", 404);
+    }
+
+    // Check permissions
+    // RECEPTION can only see payments in their branch
+    if (role === "RECEPTION" && payment.appointment.branchId !== branchId) {
+      return sendError(res, "You can only view payments in your branch", 403);
+    }
+
+    // DENTIST can only see payments for their own appointments
+    if (role === "DENTIST" && payment.appointment.dentistId !== userId) {
+      return sendError(
+        res,
+        "You can only view payments for your own appointments",
+        403
+      );
+    }
+
+    return sendSuccess(res, payment);
+  } catch (error) {
+    console.error("Get payment by ID error:", error);
+    return sendError(res, "Server error", 500, error);
   }
 };
 
@@ -917,13 +1158,41 @@ const getPaymentStats = async (req, res) => {
 
 const generateReceipt = async (req, res) => {
   // #region agent log
-  fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:918',message:'generateReceipt entry',data:{paymentId:req.params?.id,userId:req.user?.id,role:req.user?.role},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+  fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: "payment.controller.js:918",
+      message: "generateReceipt entry",
+      data: {
+        paymentId: req.params?.id,
+        userId: req.user?.id,
+        role: req.user?.role,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "E",
+    }),
+  }).catch(() => {});
   // #endregion
   try {
     const { id } = req.params;
     const { branchId: userBranchId, role } = req.user;
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:923',message:'before payment query',data:{paymentId:id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:923",
+        message: "before payment query",
+        data: { paymentId: id },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "E",
+      }),
+    }).catch(() => {});
     // #endregion
 
     // Get payment with all related data
@@ -964,7 +1233,23 @@ const generateReceipt = async (req, res) => {
       },
     });
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:959',message:'after payment query',data:{found:!!payment,hasAppointment:!!payment?.appointment,hasBranch:!!payment?.appointment?.branch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:959",
+        message: "after payment query",
+        data: {
+          found: !!payment,
+          hasAppointment: !!payment?.appointment,
+          hasBranch: !!payment?.appointment?.branch,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "E",
+      }),
+    }).catch(() => {});
     // #endregion
 
     if (!payment) {
@@ -993,14 +1278,42 @@ const generateReceipt = async (req, res) => {
 
     // Generate receipt HTML
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:985',message:'before generateReceiptHTML',data:{hasPayment:!!payment,hasAppointment:!!payment?.appointment,hasBranch:!!payment?.appointment?.branch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:985",
+        message: "before generateReceiptHTML",
+        data: {
+          hasPayment: !!payment,
+          hasAppointment: !!payment?.appointment,
+          hasBranch: !!payment?.appointment?.branch,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "E",
+      }),
+    }).catch(() => {});
     // #endregion
     const receiptHTML = generateReceiptHTML(
       payment,
       payment.appointment.branch
     );
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:990',message:'after generateReceiptHTML',data:{hasHTML:!!receiptHTML,htmlLength:receiptHTML?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:990",
+        message: "after generateReceiptHTML",
+        data: { hasHTML: !!receiptHTML, htmlLength: receiptHTML?.length },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "E",
+      }),
+    }).catch(() => {});
     // #endregion
 
     // Return HTML receipt
@@ -1008,9 +1321,77 @@ const generateReceipt = async (req, res) => {
     return res.send(receiptHTML);
   } catch (error) {
     // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'payment.controller.js:996',message:'generateReceipt error caught',data:{errorMessage:error?.message,errorCode:error?.code,errorName:error?.name,prismaCode:error?.code,prismaMeta:error?.meta,stack:error?.stack?.substring(0,500)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "payment.controller.js:996",
+        message: "generateReceipt error caught",
+        data: {
+          errorMessage: error?.message,
+          errorCode: error?.code,
+          errorName: error?.name,
+          prismaCode: error?.code,
+          prismaMeta: error?.meta,
+          stack: error?.stack?.substring(0, 500),
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "E",
+      }),
+    }).catch(() => {});
     // #endregion
     console.error("Generate receipt error:", error);
+    return sendError(res, "Server error", 500, error);
+  }
+};
+
+const deletePayment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { id: userId, role, branchId } = req.user;
+
+    // Find the payment
+    const payment = await prisma.payment.findUnique({
+      where: { id },
+      include: {
+        appointment: {
+          include: {
+            branch: true,
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      return sendError(res, "Payment not found", 404);
+    }
+
+    // Check permissions
+    // RECEPTION can only delete payments in their branch
+    if (role === "RECEPTION" && payment.appointment.branchId !== branchId) {
+      return sendError(res, "You can only delete payments in your branch", 403);
+    }
+
+    // Delete the payment
+    await prisma.payment.delete({
+      where: { id },
+    });
+
+    // Log sensitive action (non-blocking)
+    logSensitiveAction(req, "DELETE_PAYMENT", {
+      paymentId: id,
+      appointmentId: payment.appointmentId,
+      amount: payment.amount,
+      branchId: payment.appointment.branchId,
+    }).catch((logError) => {
+      console.error("Error logging delete payment action:", logError);
+    });
+
+    return sendSuccess(res, null, 200, "Payment deleted successfully");
+  } catch (error) {
+    console.error("Delete payment error:", error);
     return sendError(res, "Server error", 500, error);
   }
 };
@@ -1019,8 +1400,10 @@ module.exports = {
   createPayment,
   updatePayment,
   getPayments,
+  getPaymentById,
   getPaymentByAppointment,
   toggleDetailedBilling,
   getPaymentStats,
   generateReceipt,
+  deletePayment,
 };

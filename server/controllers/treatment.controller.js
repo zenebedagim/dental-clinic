@@ -259,6 +259,19 @@ const createOrUpdateTreatment = async (req, res) => {
       },
     });
 
+    // Update appointment status to IN_PROGRESS if it's currently PENDING
+    // This indicates that treatment has started
+    if (appointment.status === "PENDING") {
+      await prisma.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          status: "IN_PROGRESS",
+        },
+      });
+      // Update the treatment object to reflect the status change
+      treatment.appointment.status = "IN_PROGRESS";
+    }
+
     return sendSuccess(res, treatment, 200, "Treatment saved successfully");
   } catch (error) {
     console.error("Create/Update treatment error:", error);
@@ -305,10 +318,41 @@ const updateTreatmentStatus = async (req, res) => {
                 email: true,
               },
             },
+            payments: true,
           },
         },
       },
     });
+
+    // Update appointment status to COMPLETED if:
+    // 1. Treatment status is COMPLETED
+    // 2. All payments are fully paid (PAID status)
+    if (status === "COMPLETED" && updatedTreatment.appointment.payments) {
+      const allPayments = updatedTreatment.appointment.payments;
+      const allPaymentsPaid =
+        allPayments.length > 0 &&
+        allPayments.every(
+          (p) => p.paymentStatus === "PAID" && p.paidAmount >= p.amount
+        );
+
+      if (
+        allPaymentsPaid &&
+        updatedTreatment.appointment.status !== "COMPLETED"
+      ) {
+        try {
+          await prisma.appointment.update({
+            where: { id: updatedTreatment.appointment.id },
+            data: { status: "COMPLETED" },
+          });
+          updatedTreatment.appointment.status = "COMPLETED";
+        } catch (updateError) {
+          console.error(
+            "Error updating appointment status to COMPLETED:",
+            updateError
+          );
+        }
+      }
+    }
 
     return sendSuccess(
       res,

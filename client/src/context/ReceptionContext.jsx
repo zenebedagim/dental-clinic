@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useEffect,
-} from "react";
+import { createContext, useState, useCallback, useEffect } from "react";
 import api from "../services/api";
 import useBranch from "../hooks/useBranch";
 import requestCache from "../utils/requestCache";
@@ -17,6 +11,7 @@ export const ReceptionProvider = ({ children }) => {
   // Appointments state
   const [appointments, setAppointments] = useState([]);
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+
   const [appointmentsError, setAppointmentsError] = useState(null);
 
   // Payments state
@@ -24,10 +19,10 @@ export const ReceptionProvider = ({ children }) => {
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState(null);
 
-  // Patients state
-  const [patients, setPatients] = useState([]);
-  const [patientsLoading, setPatientsLoading] = useState(false);
-  const [patientsError, setPatientsError] = useState(null);
+  // Patients state (for future use)
+  const [patients] = useState([]);
+  const [patientsLoading] = useState(false);
+  const [patientsError] = useState(null);
 
   // Cache keys
   const getAppointmentsCacheKey = useCallback(
@@ -252,14 +247,6 @@ export const ReceptionProvider = ({ children }) => {
       {children}
     </ReceptionContext.Provider>
   );
-};
-
-export const useReception = () => {
-  const context = useContext(ReceptionContext);
-  if (!context) {
-    throw new Error("useReception must be used within ReceptionProvider");
-  }
-  return context;
 };
 
 export default ReceptionContext;

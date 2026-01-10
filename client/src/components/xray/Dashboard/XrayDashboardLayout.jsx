@@ -2,10 +2,14 @@ import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import Navbar from "../../common/Navbar";
 import XraySidebar from "../Shared/XraySidebar";
+import useSessionTimeout from "../../../hooks/useSessionTimeout";
 
 const XrayDashboardLayout = () => {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Session timeout: 30 minutes of inactivity - logout after timeout
+  useSessionTimeout(30, true);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">

@@ -2,16 +2,19 @@ const prisma = require("../config/db");
 const bcrypt = require("bcryptjs");
 const { sendSuccess, sendError } = require("../utils/response.util");
 const auditService = require("../services/audit.service");
+const { encryptPassword, decryptPassword } = require("../utils/crypto.util");
+const { broadcastToRoom } = require("../socket/socketServer");
 
 const getAllUsers = async (req, res) => {
   try {
     const { branchId, role } = req.query;
     const { role: userRole } = req.user;
+    const isAdmin = userRole === "ADMIN";
 
     const where = {};
     
     // Admin can see all users, others filter by branch
-    if (userRole !== "ADMIN" && req.user.branchId) {
+    if (!isAdmin && req.user.branchId) {
       where.branchId = req.user.branchId;
     } else if (branchId) {
       where.branchId = branchId;
@@ -31,6 +34,12 @@ const getAllUsers = async (req, res) => {
         branchId: true,
         specialization: true,
         createdAt: true,
+        createdBy: true,
+        passwordChanged: true,
+        passwordChangedBy: true,
+        passwordChangedAt: true,
+        passwordChangedByUserFlag: true,
+        adminVisiblePassword: isAdmin ? true : false, // Only include for admin
         branch: {
           select: {
             id: true,
@@ -38,11 +47,55 @@ const getAllUsers = async (req, res) => {
             code: true,
           },
         },
+        createdByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
+        passwordChangedByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
       },
       orderBy: { name: "asc" },
     });
 
-    return sendSuccess(res, users);
+    // Map email to phone and decrypt passwords for admin view
+    const usersWithPhone = users.map(user => {
+      const baseUser = {
+        ...user,
+        phone: /^[0-9]{10,15}$/.test(user.email) ? user.email : null, // If email is a phone number, use it as phone
+      };
+      
+      // Only decrypt password for admin users
+      if (isAdmin && user.adminVisiblePassword) {
+        const decryptedPassword = decryptPassword(user.adminVisiblePassword);
+        // Determine who changed the password: if passwordChangedByUserFlag is true, user changed it; otherwise admin changed it
+        const changedByUserName = user.passwordChangedByUserFlag === true 
+          ? (user.passwordChangedByUser?.name || baseUser.name || "User")
+          : (user.passwordChangedByUser?.name || "Admin");
+        const changedByRole = user.passwordChangedByUserFlag === true
+          ? (user.passwordChangedByUser?.role || user.role || "USER")
+          : (user.passwordChangedByUser?.role || "ADMIN");
+        return {
+          ...baseUser,
+          plainPassword: decryptedPassword,
+          changedByUserName,
+          changedByRole,
+          createdByName: user.createdByUser?.name || "System",
+        };
+      }
+      
+      // Non-admin users don't see passwords
+      return baseUser;
+    });
+
+    return sendSuccess(res, usersWithPhone);
   } catch (error) {
     console.error("Get users error:", error);
     return sendError(res, "Server error", 500, error);
@@ -53,6 +106,8 @@ const getAllUsers = async (req, res) => {
 const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
+    const { role: userRole } = req.user;
+    const isAdmin = userRole === "ADMIN";
 
     const user = await prisma.user.findUnique({
       where: { id },
@@ -65,11 +120,31 @@ const getUserById = async (req, res) => {
         specialization: true,
         createdAt: true,
         updatedAt: true,
+        createdBy: true,
+        passwordChanged: true,
+        passwordChangedBy: true,
+        passwordChangedAt: true,
+        passwordChangedByUserFlag: true,
+        adminVisiblePassword: isAdmin ? true : false, // Only include for admin
         branch: {
           select: {
             id: true,
             name: true,
             code: true,
+          },
+        },
+        createdByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
+        passwordChangedByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
           },
         },
       },
@@ -79,7 +154,27 @@ const getUserById = async (req, res) => {
       return sendError(res, "User not found", 404);
     }
 
-    return sendSuccess(res, user);
+    // Map email to phone for frontend compatibility
+    const userWithPhone = {
+      ...user,
+      phone: /^[0-9]{10,15}$/.test(user.email) ? user.email : null, // If email is a phone number, use it as phone
+    };
+    
+    // Only decrypt password for admin users
+    if (isAdmin && user.adminVisiblePassword) {
+      const decryptedPassword = decryptPassword(user.adminVisiblePassword);
+      userWithPhone.plainPassword = decryptedPassword;
+      // Determine who changed the password: if passwordChangedByUserFlag is true, user changed it; otherwise admin changed it
+      userWithPhone.changedByUserName = user.passwordChangedByUserFlag === true 
+        ? (user.passwordChangedByUser?.name || user.name || "User")
+        : (user.passwordChangedByUser?.name || "Admin");
+      userWithPhone.changedByRole = user.passwordChangedByUserFlag === true
+        ? (user.passwordChangedByUser?.role || user.role || "USER")
+        : (user.passwordChangedByUser?.role || "ADMIN");
+      userWithPhone.createdByName = user.createdByUser?.name || "System";
+    }
+
+    return sendSuccess(res, userWithPhone);
   } catch (error) {
     console.error("Get user by ID error:", error);
     return sendError(res, "Server error", 500, error);
@@ -90,10 +185,12 @@ const getUserById = async (req, res) => {
 const createUser = async (req, res) => {
   try {
     const { id: adminId, branchId: adminBranchId } = req.user;
-    const { name, email, password, role, branchId, specialization } = req.body;
+    const { name, phone, email, password, role, branchId, specialization } = req.body;
 
-    if (!name || !email || !password || !role || !branchId) {
-      return sendError(res, "Name, email, password, role, and branch are required", 400);
+    // Use phone if provided, otherwise fall back to email (for backward compatibility)
+    const identifier = phone || email;
+    if (!name || !identifier || !password || !role || !branchId) {
+      return sendError(res, "Name, phone/email, password, role, and branch are required", 400);
     }
 
     // Validate role
@@ -102,13 +199,22 @@ const createUser = async (req, res) => {
       return sendError(res, "Invalid role", 400);
     }
 
-    // Check if email already exists
+    // Validate phone format if phone is provided
+    if (phone && !/^[0-9]{10,15}$/.test(phone.replace(/\s+/g, ""))) {
+      return sendError(res, "Invalid phone number format (10-15 digits required)", 400);
+    }
+
+    // Use phone as email identifier (store phone in email field for now)
+    // This allows us to use phone without schema migration
+    const emailValue = phone ? phone.replace(/\s+/g, "") : email.toLowerCase().trim();
+
+    // Check if identifier already exists
     const existingUser = await prisma.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
+      where: { email: emailValue },
     });
 
     if (existingUser) {
-      return sendError(res, "User with this email already exists", 400);
+      return sendError(res, "User with this phone/email already exists", 400);
     }
 
     // Verify branch exists
@@ -120,27 +226,46 @@ const createUser = async (req, res) => {
       return sendError(res, "Branch not found", 404);
     }
 
-    // Hash password
+    // Hash password with bcrypt for authentication
     const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Encrypt plaintext password with AES for admin visibility
+    const encryptedPassword = encryptPassword(password);
+    
+    // Get current timestamp for password change tracking
+    const now = new Date();
 
     // Create user
+    // Store phone in email field (for backward compatibility with existing schema)
     const user = await prisma.user.create({
       data: {
         name,
-        email: email.toLowerCase().trim(),
+        email: emailValue,
         password: hashedPassword,
+        adminVisiblePassword: encryptedPassword, // AES-encrypted plaintext
         role,
         branchId,
         specialization: role === "DENTIST" ? specialization : null,
+        createdBy: adminId, // Admin who created the user
+        passwordChanged: false, // User hasn't changed password yet
+        passwordChangedBy: adminId, // Admin set the initial password
+        passwordChangedAt: now, // Timestamp when password was set
+        passwordChangedByUserFlag: false, // Password was set by admin, not user
       },
       select: {
         id: true,
         name: true,
-        email: true,
+        email: true, // This contains phone if phone was provided
         role: true,
         branchId: true,
         specialization: true,
         createdAt: true,
+        createdBy: true,
+        passwordChanged: true,
+        passwordChangedBy: true,
+        passwordChangedAt: true,
+        passwordChangedByUserFlag: true,
+        adminVisiblePassword: true,
         branch: {
           select: {
             id: true,
@@ -148,8 +273,34 @@ const createUser = async (req, res) => {
             code: true,
           },
         },
+        createdByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
+        passwordChangedByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
       },
     });
+
+    // Decrypt password for admin response (admin needs to see it)
+    const decryptedPassword = decryptPassword(user.adminVisiblePassword);
+
+    // Map email to phone for frontend compatibility
+    const userWithPhone = {
+      ...user,
+      phone: /^[0-9]{10,15}$/.test(user.email) ? user.email : null,
+      plainPassword: decryptedPassword, // Decrypted password for admin view
+      changedByUserName: user.passwordChangedByUser?.name || "Admin",
+      changedByRole: user.passwordChangedByUser?.role || "ADMIN",
+    };
 
     // Log audit action
     await auditService.logAction(
@@ -158,12 +309,27 @@ const createUser = async (req, res) => {
       "User",
       user.id,
       null,
-      { name, email, role, branchId, specialization },
+      { name, phone: phone || email, role, branchId, specialization },
       req,
       branchId
     );
 
-    return sendSuccess(res, user, 201, "User created successfully");
+    // Emit WebSocket event to admin room for real-time update
+    try {
+      // Broadcast to all admin users across all branches
+      // Using pattern matching for "role:ADMIN" which should match "role:ADMIN:branch:*" rooms
+      broadcastToRoom("role:ADMIN", "user_created", {
+        userId: user.id,
+        userName: user.name,
+        userRole: user.role,
+        createdBy: adminId,
+        timestamp: now.toISOString(),
+      });
+    } catch (err) {
+      console.error("Error emitting user_created event:", err);
+    }
+
+    return sendSuccess(res, userWithPhone, 201, "User created successfully");
   } catch (error) {
     console.error("Create user error:", error);
     return sendError(res, "Server error", 500, error);
@@ -175,7 +341,7 @@ const updateUser = async (req, res) => {
   try {
     const { id: adminId } = req.user;
     const { id } = req.params;
-    const { name, email, role, branchId, specialization } = req.body;
+    const { name, phone, email, password, role, branchId, specialization } = req.body;
 
     // Get existing user
     const existingUser = await prisma.user.findUnique({
@@ -202,14 +368,27 @@ const updateUser = async (req, res) => {
       }
     }
 
-    // Check email uniqueness if email is being changed
-    if (email && email.toLowerCase().trim() !== existingUser.email) {
-      const emailExists = await prisma.user.findUnique({
-        where: { email: email.toLowerCase().trim() },
+    // Handle phone/email update
+    // Use phone if provided, otherwise use email (for backward compatibility)
+    let emailValue = existingUser.email;
+    if (phone) {
+      // Validate phone format
+      if (!/^[0-9]{10,15}$/.test(phone.replace(/\s+/g, ""))) {
+        return sendError(res, "Invalid phone number format (10-15 digits required)", 400);
+      }
+      emailValue = phone.replace(/\s+/g, "");
+    } else if (email) {
+      emailValue = email.toLowerCase().trim();
+    }
+
+    // Check uniqueness if identifier is being changed
+    if (emailValue !== existingUser.email) {
+      const identifierExists = await prisma.user.findUnique({
+        where: { email: emailValue },
       });
 
-      if (emailExists) {
-        return sendError(res, "User with this email already exists", 400);
+      if (identifierExists) {
+        return sendError(res, "User with this phone/email already exists", 400);
       }
     }
 
@@ -227,7 +406,30 @@ const updateUser = async (req, res) => {
     // Prepare update data
     const updateData = {};
     if (name) updateData.name = name;
-    if (email) updateData.email = email.toLowerCase().trim();
+    // Update email field with phone if provided, or email if provided
+    if (phone || email) {
+      updateData.email = emailValue;
+    }
+    
+    let newPasswordPlain = null; // Store plaintext password for WebSocket event
+    
+    if (password) {
+      // Hash password with bcrypt for authentication
+      updateData.password = await bcrypt.hash(password, 10);
+      
+      // Encrypt plaintext password with AES for admin visibility
+      updateData.adminVisiblePassword = encryptPassword(password);
+      
+      // Update password tracking fields
+      const now = new Date();
+      updateData.passwordChangedBy = adminId; // Admin changed the password
+      updateData.passwordChangedAt = now;
+      updateData.passwordChangedByUserFlag = false; // Password changed by admin
+      
+      // Store plaintext for WebSocket event (admin needs to see it)
+      newPasswordPlain = password;
+    }
+    
     if (role) updateData.role = role;
     if (branchId) updateData.branchId = branchId;
     if (specialization !== undefined) {
@@ -246,6 +448,12 @@ const updateUser = async (req, res) => {
         branchId: true,
         specialization: true,
         updatedAt: true,
+        createdBy: true,
+        passwordChanged: true,
+        passwordChangedBy: true,
+        passwordChangedAt: true,
+        passwordChangedByUserFlag: true,
+        adminVisiblePassword: true,
         branch: {
           select: {
             id: true,
@@ -253,8 +461,164 @@ const updateUser = async (req, res) => {
             code: true,
           },
         },
+        createdByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
+        passwordChangedByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
       },
     });
+
+    // Decrypt password for admin response if password was changed
+    let decryptedPassword = null;
+    if (updatedUser.adminVisiblePassword) {
+      decryptedPassword = decryptPassword(updatedUser.adminVisiblePassword);
+    }
+
+    // Map email to phone for frontend compatibility
+    const userWithPhone = {
+      ...updatedUser,
+      phone: /^[0-9]{10,15}$/.test(updatedUser.email) ? updatedUser.email : null,
+    };
+    
+    // Add password metadata for admin view
+    if (decryptedPassword) {
+      userWithPhone.plainPassword = decryptedPassword;
+      userWithPhone.changedByUserName = updatedUser.passwordChangedByUser?.name || "Admin";
+      userWithPhone.changedByRole = updatedUser.passwordChangedByUser?.role || "ADMIN";
+      userWithPhone.createdByName = updatedUser.createdByUser?.name || "System";
+    }
+    
+    // Emit WebSocket event for real-time password sync (only if password was changed)
+    if (password && newPasswordPlain) {
+      try {
+        broadcastToRoom("role:ADMIN", "password_changed", {
+          userId: id,
+          newPassword: newPasswordPlain, // Decrypted password for admin view
+          changedBy: "admin",
+          changedByUserId: adminId,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error("Error emitting password change event:", err);
+      }
+    }
+
+    // Log audit action (include phone in audit log)
+    const auditData = { ...updateData };
+    if (phone) auditData.phone = phone;
+    await auditService.logAction(
+      adminId,
+      "UPDATE",
+      "User",
+      id,
+      existingUser,
+      auditData,
+      req,
+      updatedUser.branchId
+    );
+
+    return sendSuccess(res, userWithPhone, 200, "User updated successfully");
+  } catch (error) {
+    console.error("Update user error:", error);
+    return sendError(res, "Server error", 500, error);
+  }
+};
+
+// Admin-only: Change user password
+const changeUserPassword = async (req, res) => {
+  try {
+    const { id: adminId } = req.user;
+    const { id } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.trim().length < 6) {
+      return sendError(res, "New password is required and must be at least 6 characters", 400);
+    }
+
+    // Get existing user
+    const existingUser = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        branchId: true,
+      },
+    });
+
+    if (!existingUser) {
+      return sendError(res, "User not found", 404);
+    }
+
+    // Hash password with bcrypt for authentication
+    const hashedPassword = await bcrypt.hash(newPassword.trim(), 10);
+    
+    // Encrypt plaintext password with AES for admin visibility
+    const encryptedPassword = encryptPassword(newPassword.trim());
+    
+    // Get current timestamp for password change tracking
+    const now = new Date();
+
+    // Update user password
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: {
+        password: hashedPassword,
+        adminVisiblePassword: encryptedPassword,
+        passwordChangedBy: adminId, // Admin changed the password
+        passwordChangedAt: now,
+        passwordChangedByUserFlag: false, // Password changed by admin
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        branchId: true,
+        passwordChanged: true,
+        passwordChangedBy: true,
+        passwordChangedAt: true,
+        passwordChangedByUserFlag: true,
+        adminVisiblePassword: true,
+        branch: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
+        passwordChangedByUser: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+          },
+        },
+      },
+    });
+
+    // Decrypt password for admin response
+    const decryptedPassword = decryptPassword(updatedUser.adminVisiblePassword);
+
+    // Map email to phone for frontend compatibility
+    const userWithPhone = {
+      ...updatedUser,
+      phone: /^[0-9]{10,15}$/.test(updatedUser.email) ? updatedUser.email : null,
+      plainPassword: decryptedPassword, // Decrypted password for admin view
+      changedByUserName: updatedUser.passwordChangedByUser?.name || "Admin",
+      changedByRole: updatedUser.passwordChangedByUser?.role || "ADMIN",
+    };
 
     // Log audit action
     await auditService.logAction(
@@ -263,14 +627,27 @@ const updateUser = async (req, res) => {
       "User",
       id,
       existingUser,
-      updateData,
+      { passwordChanged: true, changedBy: "admin" },
       req,
       updatedUser.branchId
     );
 
-    return sendSuccess(res, updatedUser, 200, "User updated successfully");
+    // Emit WebSocket event to admin room for real-time update
+    try {
+      broadcastToRoom("role:ADMIN", "password_changed", {
+        userId: id,
+        newPassword: newPassword.trim(), // Decrypted password for admin view
+        changedBy: "admin",
+        changedByUserId: adminId,
+        timestamp: now.toISOString(),
+      });
+    } catch (err) {
+      console.error("Error emitting password change event:", err);
+    }
+
+    return sendSuccess(res, userWithPhone, 200, "Password changed successfully");
   } catch (error) {
-    console.error("Update user error:", error);
+    console.error("Change user password error:", error);
     return sendError(res, "Server error", 500, error);
   }
 };
@@ -437,6 +814,7 @@ module.exports = {
   getUserById,
   createUser,
   updateUser,
+  changeUserPassword,
   deleteUser,
   resetUserPassword,
   getUserActivityLog,

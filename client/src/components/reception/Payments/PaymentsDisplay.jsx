@@ -24,6 +24,9 @@ const PaymentsDisplay = () => {
   const [patientFilter, setPatientFilter] = useState("");
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [selectedPatientPayments, setSelectedPatientPayments] = useState([]);
+  const [selectedPatientAppointments, setSelectedPatientAppointments] =
+    useState([]);
 
   const abortControllerRef = useRef(null);
 
@@ -95,10 +98,9 @@ const PaymentsDisplay = () => {
             paymentStatus: payment.paymentStatus,
             paymentMethod: payment.paymentMethod,
             paymentDate: payment.paymentDate,
-            showDetailedBilling: payment.showDetailedBilling || false,
             isHidden: payment.isHidden || false,
+            notes: payment.notes || "", // Include payment notes from dentist
             appointment: payment.appointment,
-            // Include full payment object for detailed billing checks
             payment: payment,
           }))
           .sort((a, b) => new Date(b.date) - new Date(a.date)); // Sort by date (most recent first)
@@ -132,25 +134,39 @@ const PaymentsDisplay = () => {
     }
   }, [selectedBranch, fetchPayments]);
 
-  // Listen for appointment creation events to refresh payments list
+  // Listen for appointment and payment creation events to refresh payments list
   useEffect(() => {
     const handleAppointmentCreated = () => {
       if (selectedBranch?.id) {
-        fetchPayments();
+        fetchPayments(true); // Skip cache when refreshing
+      }
+    };
+
+    const handlePaymentCreated = () => {
+      if (selectedBranch?.id) {
+        // Invalidate cache and refresh payments
+        const cacheKey = requestCache.generateKey("/payments", {
+          branchId: selectedBranch.id,
+          limit: 50,
+        });
+        requestCache.delete(cacheKey);
+        fetchPayments(true); // Skip cache when refreshing
       }
     };
 
     window.addEventListener("appointment-created", handleAppointmentCreated);
+    window.addEventListener("payment-created", handlePaymentCreated);
     return () => {
       window.removeEventListener(
         "appointment-created",
         handleAppointmentCreated
       );
+      window.removeEventListener("payment-created", handlePaymentCreated);
     };
   }, [selectedBranch, fetchPayments]);
 
-  // Filter payments based on filters
-  const filteredPayments = useMemo(() => {
+  // Group payments by patient and filter
+  const groupedByPatient = useMemo(() => {
     let filtered = payments;
 
     // Filter out hidden payments
@@ -170,7 +186,82 @@ const PaymentsDisplay = () => {
       );
     }
 
-    return filtered;
+    // Group by patient (using patient ID if available, otherwise name + phone)
+    const patientMap = new Map();
+
+    filtered.forEach((payment) => {
+      const patientId =
+        payment.patient?.id ||
+        `${payment.patientName}_${payment.patient?.phone || ""}`;
+
+      if (!patientMap.has(patientId)) {
+        patientMap.set(patientId, {
+          patientId: payment.patient?.id,
+          patientName: payment.patientName,
+          patient: payment.patient,
+          phone: payment.patient?.phone || "—",
+          dentist: payment.dentist,
+          treatment: payment.treatment,
+          // Aggregated data
+          totalAmount: 0,
+          totalPaidAmount: 0,
+          paymentCount: 0,
+          // Latest payment data (for display)
+          latestDate: payment.date,
+          latestPaymentStatus: payment.paymentStatus,
+          latestNotes: payment.notes,
+          // All appointments for this patient (for modal)
+          appointments: [],
+          // All payments for this patient
+          allPayments: [],
+        });
+      }
+
+      const patientGroup = patientMap.get(patientId);
+      patientGroup.totalAmount += payment.amount || 0;
+      patientGroup.totalPaidAmount += payment.paidAmount || 0;
+      patientGroup.paymentCount += 1;
+
+      // Update latest data if this payment is more recent
+      if (new Date(payment.date) > new Date(patientGroup.latestDate)) {
+        patientGroup.latestDate = payment.date;
+        patientGroup.latestPaymentStatus = payment.paymentStatus;
+        patientGroup.latestNotes = payment.notes;
+        patientGroup.dentist = payment.dentist;
+        patientGroup.treatment = payment.treatment;
+      }
+
+      // Store all appointments and payments for this patient
+      if (
+        payment.appointment &&
+        !patientGroup.appointments.find((a) => a.id === payment.appointment.id)
+      ) {
+        patientGroup.appointments.push(payment.appointment);
+      }
+      patientGroup.allPayments.push(payment);
+    });
+
+    // Convert map to array and format for display
+    return Array.from(patientMap.values()).map((group) => ({
+      id: `patient_${group.patientId || group.patientName}`,
+      patientId: group.patientId,
+      patientName: group.patientName,
+      patient: group.patient,
+      phone: group.phone,
+      dentist: group.dentist,
+      treatment: group.treatment,
+      date: group.latestDate,
+      amount: group.totalAmount,
+      paidAmount: group.totalPaidAmount,
+      paymentStatus: group.latestPaymentStatus,
+      notes: group.latestNotes,
+      paymentCount: group.paymentCount,
+      // Store appointments and payments for action button
+      appointments: group.appointments,
+      allPayments: group.allPayments,
+      // Use latest appointment for modal (will be updated when action is clicked)
+      appointment: group.appointments[0] || null,
+    }));
   }, [payments, statusFilter, patientFilter]);
 
   // Keyboard shortcut: Ctrl + H - ONLY way to open private payments
@@ -242,6 +333,11 @@ const PaymentsDisplay = () => {
               Paid: {formatCurrency(row.paidAmount)}
             </p>
           )}
+          {row.paymentCount > 1 && (
+            <p className="text-xs text-gray-400">
+              ({row.paymentCount} payment{row.paymentCount > 1 ? "s" : ""})
+            </p>
+          )}
         </div>
       ),
     },
@@ -261,20 +357,26 @@ const PaymentsDisplay = () => {
       },
     },
     {
-      key: "showDetailedBilling",
-      label: "Detailed Billing",
+      key: "notes",
+      label: "Payment Notes",
+      sortable: false,
+      searchable: true,
       render: (value) => {
-        if (value) {
-          return (
-            <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-              Enabled
-            </span>
-          );
+        if (!value || !value.trim()) {
+          return <span className="italic text-gray-400">—</span>;
         }
+        // Truncate long notes for table display
+        const truncated =
+          value.length > 50 ? `${value.substring(0, 50)}...` : value;
         return (
-          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-500">
-            Basic Only
-          </span>
+          <div className="max-w-xs">
+            <p
+              className="text-sm text-gray-700 whitespace-pre-wrap"
+              title={value}
+            >
+              {truncated}
+            </p>
+          </div>
         );
       },
     },
@@ -282,19 +384,63 @@ const PaymentsDisplay = () => {
 
   if (!selectedBranch) {
     return (
-      <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded">
+      <div className="px-4 py-3 text-yellow-700 bg-yellow-100 border border-yellow-400 rounded">
         Please select a branch to view payments.
       </div>
     );
   }
 
-  const handleUpdatePayment = (payment) => {
-    setSelectedAppointment(payment.appointment);
+  const handleUpdatePayment = async (patientGroup) => {
+    // Find the most recent appointment for this patient to use for modal
+    const latestAppointment =
+      patientGroup.appointments?.sort(
+        (a, b) =>
+          new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt)
+      )[0] || patientGroup.appointment;
+
+    if (!latestAppointment) {
+      setError("No appointment found for this patient");
+      return;
+    }
+
+    // Fetch all payments for all appointments of this patient
+    try {
+      const allPaymentsForPatient = [];
+
+      // Fetch payments for each appointment of this patient
+      for (const apt of patientGroup.appointments || []) {
+        try {
+          const response = await api.get(`/payments/appointment/${apt.id}`);
+          const payments = Array.isArray(response.data?.data)
+            ? response.data.data
+            : Array.isArray(response.data)
+            ? response.data
+            : response.data?.data
+            ? [response.data.data]
+            : [];
+          allPaymentsForPatient.push(...payments);
+        } catch (err) {
+          // Ignore errors for individual appointments
+          console.warn(
+            `Failed to fetch payments for appointment ${apt.id}:`,
+            err
+          );
+        }
+      }
+
+      setSelectedPatientPayments(allPaymentsForPatient);
+      setSelectedPatientAppointments(patientGroup.appointments || []);
+      setSelectedAppointment(latestAppointment);
+
     // Set patient in context for history modal
-    if (payment.appointment?.patient) {
-      setSelectedPatient(payment.appointment.patient);
+      if (patientGroup.patient) {
+        setSelectedPatient(patientGroup.patient);
     }
     setPaymentModalOpen(true);
+    } catch (err) {
+      setError("Failed to fetch payment history for this patient");
+      console.error("Error fetching patient payments:", err);
+    }
   };
 
   const handlePaymentSaved = () => {
@@ -308,11 +454,11 @@ const PaymentsDisplay = () => {
   };
 
   return (
-    <div className="bg-white p-4 md:p-6 rounded-lg shadow-md">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+    <div className="p-4 bg-white rounded-lg shadow-md md:p-6">
+      <div className="flex flex-col items-start justify-between gap-3 mb-4 sm:flex-row sm:items-center">
         <div>
           <h2 className="text-xl font-bold">Recent Payments</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="mt-1 text-sm text-gray-500">
             Recent payments (last 30 days, max 50)
           </p>
         </div>
@@ -328,15 +474,15 @@ const PaymentsDisplay = () => {
 
       {/* Filters */}
       <div className="mb-4 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block mb-1 text-sm font-medium text-gray-700">
               Status Filter
             </label>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="ALL">All Status</option>
               <option value="PAID">Paid</option>
@@ -345,7 +491,7 @@ const PaymentsDisplay = () => {
             </select>
           </div>
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block mb-1 text-sm font-medium text-gray-700">
               Search Patient
             </label>
             <input
@@ -353,25 +499,25 @@ const PaymentsDisplay = () => {
               value={patientFilter}
               onChange={(e) => setPatientFilter(e.target.value)}
               placeholder="Search by patient name..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
         </div>
       </div>
 
       {loading ? (
-        <div className="text-center py-8">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+        <div className="py-8 text-center">
+          <div className="inline-block w-8 h-8 border-b-2 border-indigo-600 rounded-full animate-spin"></div>
           <p className="mt-2 text-gray-500">Loading payments...</p>
         </div>
       ) : error ? (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+        <div className="px-4 py-3 text-red-700 bg-red-100 border border-red-400 rounded">
           {error}
         </div>
       ) : (
         <>
           <DataTable
-            data={filteredPayments}
+            data={groupedByPatient}
             columns={columns}
             title="Payments"
             emptyMessage="No payments recorded"
@@ -383,23 +529,24 @@ const PaymentsDisplay = () => {
             printable={true}
             actions={[
               {
-                label: "Update Payment",
+                label: "View Payment History",
                 icon: "💰",
                 variant: "primary",
-                onClick: (payment) => handleUpdatePayment(payment),
+                onClick: (patientGroup) => handleUpdatePayment(patientGroup),
               },
             ]}
           />
 
-          {filteredPayments.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <div className="flex justify-between items-center">
+          {groupedByPatient.length > 0 && (
+            <div className="pt-4 mt-4 border-t border-gray-200">
+              <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-gray-700">
-                  Total ({filteredPayments.length} payments):
+                  Total ({groupedByPatient.length} patient
+                  {groupedByPatient.length > 1 ? "s" : ""}):
                 </span>
                 <span className="text-lg font-bold text-green-600">
                   {formatCurrency(
-                    filteredPayments.reduce(
+                    groupedByPatient.reduce(
                       (sum, p) => sum + (p.amount || 0),
                       0
                     )
@@ -416,8 +563,12 @@ const PaymentsDisplay = () => {
         onClose={() => {
           setPaymentModalOpen(false);
           setSelectedAppointment(null);
+          setSelectedPatientPayments([]);
+          setSelectedPatientAppointments([]);
         }}
         appointment={selectedAppointment}
+        allPatientPayments={selectedPatientPayments}
+        allPatientAppointments={selectedPatientAppointments}
         onPaymentSaved={handlePaymentSaved}
       />
     </div>

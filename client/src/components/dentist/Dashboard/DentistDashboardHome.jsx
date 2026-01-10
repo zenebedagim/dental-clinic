@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import api from "../../../services/api";
 import useBranch from "../../../hooks/useBranch";
+import ChangePassword from "../../common/ChangePassword";
 
 const DentistDashboardHome = () => {
   const { selectedBranch } = useBranch();
@@ -12,6 +13,7 @@ const DentistDashboardHome = () => {
     xrayRequests: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   const fetchDashboardStats = useCallback(async () => {
     if (!selectedBranch?.id) return;
@@ -191,28 +193,57 @@ const DentistDashboardHome = () => {
             ))}
           </div>
 
-          <div className="p-4 bg-white rounded-lg shadow-md md:p-6">
-            <h2 className="mb-4 text-lg font-bold text-gray-900 md:text-xl">
-              Quick Actions
-            </h2>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Link
-                to="/dentist/patients"
-                state={{ searchMode: true }}
-                className="bg-indigo-600 text-white px-4 md:px-6 py-3 rounded-lg hover:bg-indigo-700 transition-colors text-center font-medium min-h-[44px] flex items-center justify-center"
-              >
-                👥 View My Patients
-              </Link>
-              <Link
-                to="/dentist/treatment"
-                className="bg-green-600 text-white px-4 md:px-6 py-3 rounded-lg hover:bg-green-700 transition-colors text-center font-medium min-h-[44px] flex items-center justify-center"
-              >
-                🦷 Start Treatment
-              </Link>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="p-4 bg-white rounded-lg shadow-md md:p-6">
+              <h2 className="mb-4 text-lg font-bold text-gray-900 md:text-xl">
+                Quick Actions
+              </h2>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Link
+                  to="/dentist/patients"
+                  state={{ searchMode: true }}
+                  className="bg-indigo-600 text-white px-4 md:px-6 py-3 rounded-lg hover:bg-indigo-700 transition-colors text-center font-medium min-h-[44px] flex items-center justify-center"
+                >
+                  👥 View My Patients
+                </Link>
+                <Link
+                  to="/dentist/treatment"
+                  className="bg-green-600 text-white px-4 md:px-6 py-3 rounded-lg hover:bg-green-700 transition-colors text-center font-medium min-h-[44px] flex items-center justify-center"
+                >
+                  🦷 Start Treatment
+                </Link>
+              </div>
+            </div>
+
+            {/* Account Settings */}
+            <div className="p-4 bg-white rounded-lg shadow-md md:p-6">
+              <h2 className="mb-4 text-lg font-bold text-gray-900 md:text-xl">
+                Account Settings
+              </h2>
+              <div className="space-y-3">
+                <button
+                  onClick={() => setChangePasswordOpen(true)}
+                  className="w-full px-4 py-3 text-center text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors font-medium min-h-[44px] flex items-center justify-center"
+                >
+                  🔒 Change Password
+                </button>
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-xs text-blue-800">
+                    <strong>Security Note:</strong> Keep your password secure
+                    and change it regularly for better account protection.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </>
       )}
+
+      {/* Change Password Modal */}
+      <ChangePassword
+        isOpen={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+      />
     </div>
   );
 };

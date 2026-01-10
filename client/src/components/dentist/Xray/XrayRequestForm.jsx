@@ -13,6 +13,7 @@ const XrayRequestForm = ({ onRequestCreated }) => {
   const [xrayDoctors, setXrayDoctors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingAppointments, setLoadingAppointments] = useState(false);
+
   const [formData, setFormData] = useState({
     appointmentId: "",
     xrayDoctorId: "",
@@ -134,27 +135,12 @@ const XrayRequestForm = ({ onRequestCreated }) => {
         ? formData.xrayTypeOther.trim()
         : formData.xrayType;
 
-      // Get the display name for the selected type (if not "Other")
-      let xrayTypeDisplay = xrayTypeValue;
-      if (!formData.xrayTypeOther.trim()) {
-        const selectedType = XRAY_TYPES.find((t) => t.value === xrayTypeValue);
-        if (selectedType) {
-          xrayTypeDisplay = selectedType.abbreviation
-            ? `[${selectedType.abbreviation}] ${selectedType.name}`
-            : selectedType.name;
-        }
-      }
-
-      // Combine notes with X-ray type information
-      const notesWithType = formData.notes
-        ? `${formData.notes}\n\nInvestigation/X-Ray Type: ${xrayTypeDisplay}`
-        : `Investigation/X-Ray Type: ${xrayTypeDisplay}`;
-
-      // Create X-Ray request by updating the appointment with xrayId
-      // Include xrayType in notes for documentation
+      // Create X-Ray request by updating the appointment with xrayId, xrayType, urgency, and notes
       await api.put(`/appointments/${formData.appointmentId}`, {
         xrayId: formData.xrayDoctorId,
-        notes: notesWithType,
+        xrayType: xrayTypeValue,
+        urgency: formData.urgency,
+        notes: formData.notes || null,
       });
 
       showSuccess("X-Ray request created successfully!");
@@ -272,7 +258,7 @@ const XrayRequestForm = ({ onRequestCreated }) => {
           {/* X-Ray Doctor Selection */}
           <div>
             <label className="block mb-1 text-sm font-medium text-gray-700">
-              X-Ray Doctor *
+              X-Ray
             </label>
             <select
               name="xrayDoctorId"
@@ -281,7 +267,7 @@ const XrayRequestForm = ({ onRequestCreated }) => {
               required
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="">Select X-Ray Doctor</option>
+              <option value="">Select X-Ray </option>
               {xrayDoctors.map((doctor) => (
                 <option key={doctor.id} value={doctor.id}>
                   {doctor.name}
@@ -290,7 +276,7 @@ const XrayRequestForm = ({ onRequestCreated }) => {
             </select>
             {xrayDoctors.length === 0 && (
               <p className="mt-1 text-xs text-yellow-600">
-                No X-Ray doctors available in this branch.
+                No X-Ray available in this branch.
               </p>
             )}
           </div>
@@ -402,7 +388,6 @@ const XrayRequestForm = ({ onRequestCreated }) => {
             >
               {loading ? "Creating..." : "Create Request"}
             </button>
-            
           </div>
         </form>
       </Modal>

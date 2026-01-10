@@ -9,15 +9,15 @@ const formatCurrency = (amount) => {
     typeof amount === "object" && amount.toNumber
       ? amount.toNumber()
       : parseFloat(amount);
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("en-ET", {
     style: "currency",
-    currency: "USD",
+    currency: "ETB",
   }).format(num);
 };
 
 const formatDate = (date) => {
   if (!date) return "N/A";
-  return new Date(date).toLocaleDateString("en-US", {
+  return new Date(date).toLocaleDateString("en-ET", {
     year: "numeric",
     month: "long",
     day: "numeric",

@@ -14,7 +14,8 @@ export const formatDate = (dateString, options = {}) => {
 
   const {
     includeTime = false,
-    locale = "en-US",
+
+    locale = "en-ET",
     dateStyle = "short",
     timeStyle = "short",
   } = options;
@@ -42,10 +43,10 @@ export const formatDate = (dateString, options = {}) => {
 /**
  * Format date and time separately
  * @param {string|Date} dateString - Date to format
- * @param {string} locale - Locale string (default: 'en-US')
+ * @param {string} locale - Locale string (default: 'en-ET')
  * @returns {object} Object with date and time strings
  */
-export const formatDateTime = (dateString, locale = "en-US") => {
+export const formatDateTime = (dateString, locale = "en-ET") => {
   if (!dateString) return { date: "N/A", time: "N/A" };
 
   try {
@@ -139,7 +140,7 @@ export const isToday = (dateString) => {
       date.getMonth() === today.getMonth() &&
       date.getFullYear() === today.getFullYear()
     );
-  } catch (error) {
+  } catch {
     return false;
   }
 };
@@ -157,7 +158,7 @@ export const isPast = (dateString) => {
     if (isNaN(date.getTime())) return false;
 
     return date < new Date();
-  } catch (error) {
+  } catch {
     return false;
   }
 };

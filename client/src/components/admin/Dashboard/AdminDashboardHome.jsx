@@ -1,6 +1,11 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import ChangePassword from "../../common/ChangePassword";
 
 const AdminDashboardHome = () => {
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const user = JSON.parse(localStorage.getItem("user") || "{}");
+
   return (
     <div className="space-y-6">
       <div>
@@ -56,11 +61,42 @@ const AdminDashboardHome = () => {
               <strong>Role:</strong> Administrator
             </p>
             <p>
+              <strong>Phone:</strong> {user.phone || user.email || "N/A"}
+            </p>
+            <p>
               <strong>Access Level:</strong> Full System Access
             </p>
           </div>
         </div>
+
+        {/* Account Settings */}
+        <div className="p-6 bg-white rounded-lg shadow-md">
+          <h2 className="mb-4 text-lg font-bold text-gray-900 md:text-xl">
+            Account Settings
+          </h2>
+          <div className="space-y-3">
+            <button
+              onClick={() => setChangePasswordOpen(true)}
+              className="block w-full px-4 py-3 text-center text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors font-medium"
+            >
+              🔒 Change Password
+            </button>
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-xs text-blue-800">
+                <strong>Security Note:</strong> Only the admin with phone number{" "}
+                <strong>0911922363</strong> can access this dashboard. Keep your
+                password secure.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Change Password Modal */}
+      <ChangePassword
+        isOpen={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+      />
     </div>
   );
 };

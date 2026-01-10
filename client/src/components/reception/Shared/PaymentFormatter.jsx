@@ -6,12 +6,17 @@
 /**
  * Format currency amount
  * @param {number|string|Decimal} amount - Amount to format
- * @param {string} currency - Currency code (default: 'USD')
- * @param {string} locale - Locale string (default: 'en-US')
+ * @param {string} currency - Currency code (default: 'ETB')
+ * @param {string} locale - Locale string (default: 'en-ET')
  * @returns {string} Formatted currency string
  */
-export const formatCurrency = (amount, currency = "USD", locale = "en-US") => {
-  if (amount === null || amount === undefined) return "$0.00";
+export const formatCurrency = (amount, currency = "ETB", locale = "en-ET") => {
+  if (amount === null || amount === undefined) {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: currency,
+    }).format(0);
+  }
 
   // Handle Decimal type from Prisma
   let numAmount = 0;

@@ -11,7 +11,6 @@ import { ReceptionProvider } from "./context/ReceptionContext";
 import ProtectedRoute from "./components/common/ProtectedRoute";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import SkeletonLoader from "./components/common/SkeletonLoader";
-import Login from "./components/auth/Login";
 
 // Code splitting - lazy load reception components
 const ReceptionDashboardLayout = lazy(() =>
@@ -46,6 +45,8 @@ import XrayDashboardHome from "./components/xray/Dashboard/XrayDashboardHome";
 import XrayRequestsView from "./components/xray/Requests/XrayRequestsView";
 import XrayPatientSearchView from "./components/xray/Patients/XrayPatientSearchView";
 import XrayViewerPublic from "./pages/XrayViewerPublic";
+import Login from "./components/auth/Login";
+import FirstTimePasswordChange from "./components/admin/FirstTimePasswordChange";
 import AdminDashboardLayout from "./components/admin/Dashboard/AdminDashboardLayout";
 import AdminDashboardHome from "./components/admin/Dashboard/AdminDashboardHome";
 import AdminBranchManagement from "./components/admin/Branches/AdminBranchManagement";
@@ -64,19 +65,19 @@ const RootRoute = () => {
     try {
       user = JSON.parse(userStr);
     } catch {
-      // Invalid user data, clear it and go to login
+      // Invalid user data, clear it
       localStorage.removeItem("token");
       localStorage.removeItem("user");
-      return <Navigate to="/login" replace />;
+      return null; // No redirect, just clear data
     }
 
     // Check if branch is selected (should be set during login from user.branch)
     // ADMIN users don't require branch selection
     if (user?.role !== "ADMIN" && !selectedBranchStr) {
-      // Branch should be set from login response, if missing, redirect to login
+      // Branch should be set from login response, if missing, clear data
       localStorage.removeItem("token");
       localStorage.removeItem("user");
-      return <Navigate to="/login" replace />;
+      return null; // No redirect, just clear data
     }
 
     // Only redirect if user data is valid and has a role
@@ -89,6 +90,11 @@ const RootRoute = () => {
       };
       const redirectPath = roleRoutes[user.role];
       if (redirectPath) {
+        // For admin users, check passwordChanged flag
+        if (user.role === "ADMIN" && user.passwordChanged === false) {
+          return <Navigate to="/admin/change-password" replace />;
+        }
+        // For other roles or admin with password changed, redirect to their dashboard
         return <Navigate to={redirectPath} replace />;
       }
     }
@@ -98,6 +104,7 @@ const RootRoute = () => {
     localStorage.removeItem("user");
   }
 
+  // Redirect to login if no token
   return <Navigate to="/login" replace />;
 };
 
@@ -288,6 +295,10 @@ function App() {
                   }
                 >
                   <Route index element={<AdminDashboardHome />} />
+                  <Route
+                    path="change-password"
+                    element={<FirstTimePasswordChange />}
+                  />
                   <Route path="branches" element={<AdminBranchManagement />} />
                   <Route
                     path="reception"

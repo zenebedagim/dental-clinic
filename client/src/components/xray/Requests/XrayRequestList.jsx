@@ -17,7 +17,7 @@ const XrayRequestList = ({ onSelectRequest, filter = "all" }) => {
       setLoading(true);
       // Pass filter to server for server-side filtering (more efficient)
       const response = await api.get("/xray", {
-        params: { 
+        params: {
           branchId: selectedBranch.id,
           filter: filter, // Server will filter the results
         },
@@ -41,24 +41,6 @@ const XrayRequestList = ({ onSelectRequest, filter = "all" }) => {
   const formatDate = (dateString) => {
     const date = new Date(dateString);
     return date.toLocaleString();
-  };
-
-  const getXrayTypeName = (xrayType) => {
-    if (!xrayType) return "N/A";
-    const type = XRAY_TYPES.find((t) => t.value === xrayType);
-    return type
-      ? type.abbreviation
-        ? `[${type.abbreviation}] ${type.name}`
-        : type.name
-      : xrayType;
-  };
-
-  const getXrayTypesFromInvestigations = (investigations) => {
-    if (!investigations) return [];
-    if (typeof investigations === "object" && investigations.types) {
-      return investigations.types;
-    }
-    return [];
   };
 
   if (!selectedBranch) {
@@ -117,30 +99,44 @@ const XrayRequestList = ({ onSelectRequest, filter = "all" }) => {
                   <p className="text-sm text-gray-600">
                     Dentist: {appointment.dentist?.name || "N/A"}
                   </p>
-                  {appointment.treatment?.investigations && (
-                    <div className="mt-2">
-                      <p className="text-xs font-medium text-gray-700 mb-1">
-                        X-Ray Types:
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {getXrayTypesFromInvestigations(
-                          appointment.treatment.investigations
-                        ).map((type, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-block bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs"
-                          >
-                            {getXrayTypeName(type)}
-                          </span>
-                        ))}
-                        {appointment.treatment.investigations?.other && (
-                          <span className="inline-block bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
-                            {appointment.treatment.investigations.other}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  
+                  {/* Investigation / X-Ray Type - Always Display */}
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-gray-700 mb-1">
+                      Investigation / X-Ray Type:
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      {appointment.xrayType ? (() => {
+                        const xrayTypeObj = XRAY_TYPES.find(t => t.value === appointment.xrayType);
+                        if (xrayTypeObj) {
+                          return xrayTypeObj.abbreviation 
+                            ? `[${xrayTypeObj.abbreviation}] ${xrayTypeObj.name}`
+                            : xrayTypeObj.name;
+                        }
+                        return appointment.xrayType.replace(/_/g, " ");
+                      })() : "—"}
+                    </p>
+                  </div>
+
+                  {/* Urgency - Always Display */}
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-gray-700 mb-1">
+                      Urgency:
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      {appointment.urgency || "—"}
+                    </p>
+                  </div>
+
+                  {/* Notes/Instructions - Always Display */}
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-gray-700 mb-1">
+                      Notes/Instructions:
+                    </p>
+                    <p className="text-xs text-gray-600 whitespace-pre-wrap">
+                      {appointment.notes || "—"}
+                    </p>
+                  </div>
                   {appointment.xrayResult && (
                     <p className="text-sm text-green-600 mt-2">
                       Result{" "}

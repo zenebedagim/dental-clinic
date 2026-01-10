@@ -40,8 +40,11 @@ const initializeSocketIO = (httpServer) => {
     // Join user-specific room
     socket.join(`user:${userId}`);
 
-    // Join role-based room
+    // Join role-based room with branch
     socket.join(`role:${role}:branch:${branchId}`);
+
+    // Join generic role-based room (for broadcasting to all users of a role)
+    socket.join(`role:${role}`);
 
     // Join branch-based room
     socket.join(`branch:${branchId}`);
@@ -79,11 +82,13 @@ const getIO = () => {
 
 /**
  * Broadcast to room
+ * Supports role-based rooms (e.g., "role:ADMIN" broadcasts to all admin users)
  */
 const broadcastToRoom = (room, event, data) => {
-  if (io) {
-    io.to(room).emit(event, data);
-  }
+  if (!io) return;
+  
+  // Direct room broadcast (works for generic role rooms like "role:ADMIN")
+  io.to(room).emit(event, data);
 };
 
 /**

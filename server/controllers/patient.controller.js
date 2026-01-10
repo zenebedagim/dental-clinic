@@ -34,6 +34,9 @@ const createPatient = async (req, res) => {
  */
 const getAllPatients = async (req, res) => {
   try {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'patient.controller.js:35',message:'getAllPatients entry',data:{hasReqUser:!!req.user,reqUserType:typeof req.user,queryParams:req.query},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     // Log incoming request for debugging
     console.log("=== getAllPatients Request ===");
     console.log("Query params:", JSON.stringify(req.query, null, 2));
@@ -52,7 +55,13 @@ const getAllPatients = async (req, res) => {
       offset,
       xrayOnly, // New parameter: filter to only patients with X-Ray appointments
     } = req.query;
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'patient.controller.js:55',message:'Before destructuring req.user',data:{reqUserExists:!!req.user,reqUserKeys:req.user?Object.keys(req.user):null,reqUserRole:req.user?.role,reqUserId:req.user?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     const { role, id: userId } = req.user;
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'patient.controller.js:56',message:'After destructuring req.user',data:{role,userId,branchId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
 
     // Parse limit and offset with defaults
     // Reduced default limit from 1000 to 100 for better performance
@@ -151,6 +160,9 @@ const getAllPatients = async (req, res) => {
       };
     }
 
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'patient.controller.js:154',message:'Before Prisma query',data:{whereClause:JSON.stringify(where),offsetNum,finalLimit},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     // Optimize query - only select necessary fields for list view
     const [patients, total] = await Promise.all([
       prisma.patient.findMany({
@@ -178,12 +190,18 @@ const getAllPatients = async (req, res) => {
       }),
       prisma.patient.count({ where }),
     ]);
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'patient.controller.js:180',message:'After Prisma query',data:{patientsCount:patients.length,total},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
 
     // Return patients array directly (client expects response.data?.data || response.data)
     console.log("=== getAllPatients Success ===");
     console.log(`Returning ${patients.length} patients`);
     return sendSuccess(res, patients);
   } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f137231e-699b-4ef5-9328-810bb022ad2f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'patient.controller.js:186',message:'getAllPatients error caught',data:{errorMessage:error.message,errorName:error.name,errorStack:error.stack,hasReqUser:!!req.user},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
+    // #endregion
     console.error("=== getAllPatients Error ===");
     console.error("Error details:", error);
     console.error("Error message:", error.message);

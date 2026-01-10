@@ -127,7 +127,7 @@ export const formatDate = (date, format = "short") => {
     };
 
     return dateObj.toLocaleDateString(
-      "en-US",
+      "en-ET",
       options[format] || options.short
     );
   } catch {
@@ -138,13 +138,18 @@ export const formatDate = (date, format = "short") => {
 /**
  * Format currency for display
  * @param {number} amount - Amount to format
- * @param {string} currency - Currency code (default: 'USD')
+ * @param {string} currency - Currency code (default: 'ETB')
  * @returns {string} Formatted currency string
  */
-export const formatCurrency = (amount, currency = "USD") => {
-  if (amount == null || isNaN(amount)) return "$0.00";
+export const formatCurrency = (amount, currency = "ETB") => {
+  if (amount == null || isNaN(amount)) {
+    return new Intl.NumberFormat("en-ET", {
+      style: "currency",
+      currency: currency,
+    }).format(0);
+  }
 
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("en-ET", {
     style: "currency",
     currency: currency,
   }).format(amount);
