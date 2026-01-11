@@ -4,11 +4,33 @@ const http = require("http");
 const compression = require("compression");
 require("dotenv").config();
 
+// Validate critical environment variables on startup
+const requiredEnvVars = ["JWT_SECRET", "DATABASE_URL"];
+const missingVars = requiredEnvVars.filter((varName) => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  console.error("❌ Missing required environment variables:");
+  missingVars.forEach((varName) => {
+    console.error(`   - ${varName}`);
+  });
+
+  if (process.env.NODE_ENV === "production") {
+    console.error("⚠️ Server cannot start without required variables");
+    process.exit(1);
+  } else {
+    console.warn("⚠️ Development mode: Continuing with warnings");
+  }
+}
+
 const app = express();
 const httpServer = http.createServer(app);
 
 // Security and optimization middleware
 app.use(compression()); // Enable gzip compression
+
+// Trust proxy for correct IP detection (critical for Render, Vercel, etc.)
+// This ensures req.ip gets the real client IP from X-Forwarded-For header
+app.set("trust proxy", 1);
 
 // CORS configuration - optimized for production
 // Build allowed origins array
@@ -23,8 +45,10 @@ if (process.env.FRONTEND_URL) {
   allowedOrigins.push(...frontendUrls);
 }
 
-// Add localhost for development (always allow)
-allowedOrigins.push("http://localhost:5173", "http://localhost:5174");
+// Add localhost for development only (not production)
+if (process.env.NODE_ENV !== "production") {
+  allowedOrigins.push("http://localhost:5173", "http://localhost:5174");
+}
 
 // Determine origin function for CORS
 const corsOptions = {
@@ -65,6 +89,18 @@ const corsOptions = {
 // Apply CORS middleware
 app.use(cors(corsOptions));
 
+// Handle CORS errors explicitly (before other middleware)
+app.use((err, req, res, next) => {
+  if (err.message === "Not allowed by CORS") {
+    return res.status(403).json({
+      success: false,
+      message: "CORS: Request not allowed from this origin",
+      origin: req.headers.origin || "unknown",
+    });
+  }
+  next(err);
+});
+
 // Log CORS configuration on startup (for debugging)
 if (process.env.NODE_ENV === "development" || process.env.LOG_CORS === "true") {
   console.log("=== CORS Configuration ===");
@@ -92,9 +128,41 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// Rate limiting - apply to all API routes
+// Health check route (before authenticated routes)
+app.get("/api/health", async (req, res) => {
+  try {
+    const prisma = require("./config/db");
+    // Quick database connection test
+    await prisma.$queryRaw`SELECT 1`;
+
+    res.json({
+      message: "Server is running",
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || "development",
+      database: "connected",
+      version: "1.0.0",
+    });
+  } catch (error) {
+    res.status(503).json({
+      message: "Server is running but database connection failed",
+      status: "degraded",
+      timestamp: new Date().toISOString(),
+      database: "disconnected",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+});
+
+// Rate limiting - apply to all API routes (skip OPTIONS preflight)
 const { apiRateLimiter } = require("./middleware/rateLimiter");
-app.use("/api", apiRateLimiter);
+app.use("/api", (req, res, next) => {
+  // Skip rate limiting for CORS preflight requests
+  if (req.method === "OPTIONS") {
+    return next();
+  }
+  apiRateLimiter(req, res, next);
+});
 
 // Routes
 const authRoutes = require("./routes/auth.routes");
@@ -125,32 +193,6 @@ app.get("/", (req, res) => {
     message: "Dental Clinic Management System API",
     status: "running",
   });
-});
-
-// Enhanced health check with database status
-app.get("/api/health", async (req, res) => {
-  try {
-    const prisma = require("./config/db");
-    // Quick database connection test
-    await prisma.$queryRaw`SELECT 1`;
-
-    res.json({
-      message: "Server is running",
-      status: "healthy",
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || "development",
-      database: "connected",
-      version: "1.0.0",
-    });
-  } catch (error) {
-    res.status(503).json({
-      message: "Server is running but database connection failed",
-      status: "degraded",
-      timestamp: new Date().toISOString(),
-      database: "disconnected",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
-  }
 });
 
 // 404 handler (must be after all routes)
